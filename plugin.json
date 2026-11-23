@@ -2,8 +2,8 @@
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "statusline-hud",
   "displayName": "Statusline HUD",
-  "version": "0.1.0",
-  "description": "Adaptive multi-line terminal HUD statusline and interactive /hud configuration skill for Antigravity CLI, with width-aware anti-wrap layout.",
+  "version": "0.2.0",
+  "description": "Adaptive multi-line terminal HUD statusline and interactive /hud configuration skill for Antigravity CLI, with per-component narrow-screen overrides.",
   "logo": "assets/logo.svg",
   "author": {
     "name": "Leon Lin",
@@ -22,6 +22,6 @@
   "suggestedPrompts": [
     "/hud",
     "/hud setup statusline",
-    "/hud switch to compact layout"
+    "/hud hide cost in split panes"
   ]
 }
