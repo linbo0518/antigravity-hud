@@ -1,0 +1,27 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "statusline-hud",
+  "displayName": "Statusline HUD",
+  "version": "0.1.0",
+  "description": "Adaptive multi-line terminal HUD statusline and interactive /hud configuration skill for Antigravity CLI, with width-aware anti-wrap layout.",
+  "logo": "assets/logo.svg",
+  "author": {
+    "name": "Leon Lin",
+    "email": "linbo0518@gmail.com",
+    "url": "https://github.com/linbo0518"
+  },
+  "homepage": "https://github.com/linbo0518/antigravity-hud",
+  "repository": "https://github.com/linbo0518/antigravity-hud",
+  "license": "MIT",
+  "keywords": [
+    "statusline",
+    "hud",
+    "cli",
+    "tui"
+  ],
+  "suggestedPrompts": [
+    "/hud",
+    "/hud setup statusline",
+    "/hud switch to compact layout"
+  ]
+}
