@@ -50,7 +50,7 @@ Everything is handled through `/hud` or plain natural language inside `agy`—no
 
 ## Symbols
 
-- **Git**: `*` dirty, `↑N`/`↓N` ahead/behind, `!N` modified/conflicted, `+N` added, `✘N` deleted, `?N` untracked.
+- **Git**: `[...]` status flags (`=` conflicted, `+` staged, `!` modified, `✘` deleted, `»` renamed, `?` untracked, `$` stashed, `↑N`/`↓N` ahead/behind) and `(+N −M)` tracked diff lines; narrow panes show `*` when dirty.
 - **Quota**: used % (green `<60%`, yellow `60–89%`, red `>=90%`) + reset time; count-only buckets show `<N> left`.
 - **Tokens**: `token <total> (<input>↑ <output>↓)` across the session.
 

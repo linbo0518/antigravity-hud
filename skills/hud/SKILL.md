@@ -42,8 +42,8 @@ Location: `${XDG_CONFIG_HOME:-~/.config}/statusline-hud/config.json` (hot-reload
 
 - All switches are booleans defaulting to `true`.
 - Enabled count and state items (`showContext`, `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showDuration`) show `0`, `0.0%`, `0m`, or `OFF` even when omitted by the CLI; disabled items, items with no value (such as an untitled session, non-Git path, or unreported quota/cache/cost), and empty rows are omitted.
-- Below 100 columns (`terminal_width < 100`), explicit `narrow` booleans override ordinary switches; missing keys inherit. Short forms (no progress bars or reset times, `wk`, 1-level path, model name without trailing `(effort)`, branch without git counts, token total only) save space without dropping selected items. Long rows may wrap.
-- **Symbols**: Git `*` dirty, `↑`/`↓` ahead/behind, `!` modified/conflicted, `+` added, `✘` deleted, `?` untracked; Quota shows used % (green `<60%`, yellow `60–89%`, red `>=90%`) or `<N> left`; Tokens show `<total> (<in>↑ <out>↓)`.
+- Below 100 columns (`terminal_width < 100`), explicit `narrow` booleans override ordinary switches; missing keys inherit. Short forms (no progress bars or reset times, `wk`, 1-level path, model name without trailing `(effort)`, branch without git details, token total only) save space without dropping selected items. Long rows may wrap.
+- **Symbols**: Git `[...]` status flags (`=` conflicted, `+` staged, `!` modified, `✘` deleted, `»` renamed, `?` untracked, `$` stashed, `↑N`/`↓N` ahead/behind) + `(+N −M)` tracked diff lines (`*` on narrow panes); Quota shows used % (green `<60%`, yellow `60–89%`, red `>=90%`) or `<N> left`; Tokens show `<total> (<in>↑ <out>↓)`.
 
 ## Workflow
 
