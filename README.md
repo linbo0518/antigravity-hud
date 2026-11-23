@@ -42,11 +42,11 @@ Re-run `agy plugin install ...` anytime to upgrade; your preferences are preserv
 Everything is handled through `/hud` or plain natural language inside `agy`—no config files to memorize:
 
 - `/hud` — check setup, preview the layout, and toggle modules
-- `/hud setup` — guide enabling the statusline
-- `/hud hide cost in split panes` — customize wide or narrow panes in plain language
-- `/hud show conversation title` — turn any module on or off (changes take effect immediately)
+- `/hud setup` / `/hud uninstall` — guide enabling the statusline or safely uninstall
+- `/hud hide title` / `/hud show title` — hide or show any module (changes take effect immediately)
+- `/hud hide cost in split panes` — override modules only for narrow panes (`<100` cols)
 - `/hud check` — diagnose setup, config, or display issues
-- `/hud reset` / `/hud uninstall` — restore defaults or safely uninstall
+- `/hud reset` — restore all defaults
 
 ## Symbols
 
@@ -79,13 +79,13 @@ Stored at `${XDG_CONFIG_HOME:-~/.config}/statusline-hud/config.json` (hot-reload
 | 2 | `showGeminiQuota`, `show3pQuota` |
 | 3 | `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showCache`, `showDuration`, `showCost`, `showTitle` |
 
-Core status always starts row 1. All switches are booleans defaulting to `true` except `showTitle` (`false`); unavailable items and empty rows are omitted, while reported `0` and `OFF` values are shown. Below 100 columns, `narrow` overrides apply (missing keys inherit) and compact text forms are used; long rows may wrap.
+Core status always starts row 1. All switches are booleans defaulting to `true`; enabled count and state items (`context`, `artifacts`, `subagents`, `tasks`, `sandbox`, `tokens`, `duration`) show `0`, `0.0%`, `0m`, or `OFF` even when omitted by the CLI, while items with no value (such as an untitled session, non-Git path, or unreported quota/cache/cost) and empty rows are omitted. Below 100 columns, `narrow` overrides apply (missing keys inherit) and compact text forms are used; long rows may wrap.
 
 ```json
 {
-  "showTitle": true,
+  "showTitle": false,
   "showCost": false,
-  "narrow": { "showTitle": false, "showCost": true }
+  "narrow": { "showCost": true }
 }
 ```
 

@@ -39,14 +39,14 @@
 
 ## 使用 `/hud`
 
-全部配置与维护都可以直接通过 `/hud` 或自然语言完成，无需记忆配置文件格式：
+全部配置与维护都可以直接通过 `/hud` 或中英文自然语言完成，无需记忆配置文件格式：
 
 - `/hud` — 检查状态、预览当前状态栏并按需开关模块
-- `/hud setup` — 引导启用状态栏
-- `/hud 仅在窄屏隐藏费用` — 用自然语言分别调整宽屏或窄屏显示项
-- `/hud 显示会话标题` — 按需开关任意模块（修改立即热生效）
+- `/hud setup` / `/hud uninstall` — 引导启用状态栏或安全卸载
+- `/hud hide title` / `/hud show title` — 隐藏或显示任意模块（修改立即热生效）
+- `/hud hide cost in split panes` — 仅在窄屏（`<100` 列）单独覆盖显示项
 - `/hud check` — 排查依赖、配置或显示异常
-- `/hud reset` / `/hud uninstall` — 恢复默认配置或安全卸载
+- `/hud reset` — 恢复默认配置
 
 ## 符号说明
 
@@ -79,13 +79,13 @@ rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/statusline-hud" "${XDG_CACHE_HOME:-$HO
 | 2 | `showGeminiQuota`, `show3pQuota` |
 | 3 | `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showCache`, `showDuration`, `showCost`, `showTitle` |
 
-核心状态始终在第一行开头。所有开关均为布尔值，除 `showTitle` 默认关闭外其余默认开启；无数据的项与空行自动省略，已报告的 `0` 和 `OFF` 照常显示。低于 100 列时生效 `narrow` 覆盖（未写则继承）并使用短写形式，内容过多时终端可能折行。
+核心状态始终在第一行开头。所有开关均为布尔值且默认全部开启；计数与状态项（上下文、产物、子代理、任务、沙箱、Token、时长）在 CLI 省略时按 `0`、`0.0%`、`0m` 或 `OFF` 照常显示，确实无值的项（如未生成标题、非 Git 目录、未上报的配额/缓存/费用）与空行自动省略。低于 100 列时生效 `narrow` 覆盖（未写则继承）并使用短写形式，内容过多时终端可能折行。
 
 ```json
 {
-  "showTitle": true,
+  "showTitle": false,
   "showCost": false,
-  "narrow": { "showTitle": false, "showCost": true }
+  "narrow": { "showCost": true }
 }
 ```
 
