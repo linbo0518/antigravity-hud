@@ -143,19 +143,16 @@ done < <(
           else "\($m)m" end
       end;
 
-    def quota($pk; $ak; $rk; $key):
-      (.quota?[$key]? // null) as $q
-      | if ($q | type) != "object" or ($q.disabled? == true) then
-          kv($pk; "--") + kv($ak; "--") + kv($rk; "--")
-        else
-          (if ($q.remaining_fraction? | is_num) then
-             $q.remaining_fraction | if . <= 0 then 1000 elif . >= 1 then 0 else ((1 - .) * 1000 | round) end
-           else "--" end) as $tenths
-          | (if $tenths == "--" and ($q.remaining_amount? | is_num) then
-               ($q.remaining_amount | clean_uint)
-             else "--" end) as $amt
-          | kv($pk; $tenths) + kv($ak; $amt) + kv($rk; ($q.reset_in_seconds? | reset_in))
-        end;
+    def quota($prefix; $key):
+      ((.quota?[$key]? | objects | select(.disabled != true)) // {}) as $q
+      | (if ($q.remaining_fraction | is_num) then
+           $q.remaining_fraction | if . <= 0 then 1000 elif . >= 1 then 0 else ((1 - .) * 1000 | round) end
+         else "--" end) as $tenths
+      | (if $tenths == "--" and ($q.remaining_amount | is_num) then
+           ($q.remaining_amount | clean_uint)
+         else "--" end) as $amt
+      | kv($prefix + "_TENTHS"; $tenths) + kv($prefix + "_AMT"; $amt)
+        + kv($prefix + "_RESET"; ($q.reset_in_seconds | reset_in));
 
     def cur_cache_pct:
       (.context_window?.current_usage? // null) as $cu
@@ -200,10 +197,10 @@ done < <(
     + kv("TOK_IN"; (.context_window?.total_input_tokens? | clean_uint))
     + kv("TOK_OUT"; (.context_window?.total_output_tokens? | clean_uint))
     + kv("CUR_CACHE_PCT"; cur_cache_pct)
-    + quota("GEMINI_5H_TENTHS"; "GEMINI_5H_AMT"; "GEMINI_5H_RESET"; "gemini-5h")
-    + quota("GEMINI_WEEKLY_TENTHS"; "GEMINI_WEEKLY_AMT"; "GEMINI_WEEKLY_RESET"; "gemini-weekly")
-    + quota("THIRD_PARTY_5H_TENTHS"; "THIRD_PARTY_5H_AMT"; "THIRD_PARTY_5H_RESET"; "3p-5h")
-    + quota("THIRD_PARTY_WEEKLY_TENTHS"; "THIRD_PARTY_WEEKLY_AMT"; "THIRD_PARTY_WEEKLY_RESET"; "3p-weekly")
+    + quota("GEMINI_5H"; "gemini-5h")
+    + quota("GEMINI_WEEKLY"; "gemini-weekly")
+    + quota("THIRD_PARTY_5H"; "3p-5h")
+    + quota("THIRD_PARTY_WEEKLY"; "3p-weekly")
   ' 2>/dev/null
 )
 
@@ -678,7 +675,7 @@ fi
 [ -z "$TITLE_FMT" ] || partTitle="${FG_GRAY}▸ ${FG_WHITE}${TITLE_FMT}${R}"
 
 partCache="" partCost=""
-SESSION_CACHE_PCT="--" SESSION_FIRST_TS=0 DISP_IN="$TOK_IN" DISP_OUT="$TOK_OUT"
+SESSION_CACHE_PCT="$CUR_CACHE_PCT" SESSION_FIRST_TS=0 DISP_IN="$TOK_IN" DISP_OUT="$TOK_OUT"
 if visible Tokens || visible Cache || visible Duration; then load_session_tokens; fi
 fmt_tokens total "$(( DISP_IN + DISP_OUT ))"
 fmt_metric partTokens token "$total"
@@ -687,7 +684,6 @@ if [ "$NARROW" -eq 0 ]; then
   fmt_tokens output "$DISP_OUT"
   partTokens+=" ${FG_GRAY}(${input}↑ ${output}↓)${R}"
 fi
-[ "$SESSION_CACHE_PCT" != "--" ] || SESSION_CACHE_PCT="$CUR_CACHE_PCT"
 [ "$SESSION_CACHE_PCT" = "--" ] || fmt_metric partCache cache "${SESSION_CACHE_PCT}%"
 if [ "$SESSION_FIRST_TS" -gt 0 ] && [ "$NOW_EPOCH" -ge "$SESSION_FIRST_TS" ]; then
   fmt_duration partDuration "$((NOW_EPOCH - SESSION_FIRST_TS))"
