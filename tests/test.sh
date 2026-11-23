@@ -74,7 +74,7 @@ cat > "$SYN_TRANS" <<EOF
 {"step_index":2,"type":"GENERIC","created_at":"${START_ISO}","content":"mentions PLANNER_RESPONSE inside tool output"}
 EOF
 
-# 2. Default wide working session (showTitle=false, known sandbox state -> 3 lines)
+# 2. Default wide working session (all switches on by default -> 3 lines)
 OUT=$(printf '%s' "{
   \"cwd\":\"/tmp\",
   \"conversation_id\":\"test-conv-1\",
@@ -97,7 +97,7 @@ OUT=$(printf '%s' "{
 }" | "$STATUSLINE")
 PLAIN=$(strip_ansi "$OUT")
 assert_eq "default wide line count" "$(printf '%s\n' "$PLAIN" | wc -l | tr -d ' ')" "3"
-assert_not_contains "title hidden by default" "$PLAIN" "Refactor statusline layout"
+assert_contains "title shown by default" "$PLAIN" "▸ Refactor statusline layout"
 assert_contains "sandbox OFF shown by default" "$PLAIN" "sandbox OFF"
 assert_contains "wide mode" "$PLAIN" "PLAN"
 assert_contains "wide subagents" "$PLAIN" "subagents 1/2"
@@ -108,12 +108,12 @@ assert_contains "wide transcript cache 1dp" "$PLAIN" "cache 90.0%"
 assert_contains "wide transcript duration" "$PLAIN" "15m"
 assert_contains "wide cost" "$PLAIN" '~$0.42'
 
-# The transcript cache must also distinguish no reported usage from a reported zero.
+# Transcript cache distinguishes no planner rows (keeps payload tokens) from explicit zero usage.
 for usage in '{}' '{"type":"PLANNER_RESPONSE","input_tokens":0,"output_tokens":0}'; do
   printf '%s\n' "$usage" > "$TMP_DIR/zero.jsonl"
   for run in 1 2; do
-    OUT=$("$STATUSLINE" <<< "{\"cwd\":\"/tmp\",\"conversation_id\":\"zero\",\"transcript_path\":\"$TMP_DIR/zero.jsonl\"}")
-    if [ "$usage" = '{}' ]; then assert_not_contains "unknown transcript usage ($run)" "$OUT" "token "
+    OUT=$("$STATUSLINE" <<< "{\"cwd\":\"/tmp\",\"conversation_id\":\"zero\",\"transcript_path\":\"$TMP_DIR/zero.jsonl\",\"context_window\":{\"total_input_tokens\":500,\"total_output_tokens\":100}}")
+    if [ "$usage" = '{}' ]; then assert_contains "no planner usage keeps payload tokens ($run)" "$(strip_ansi "$OUT")" "token 600"
     else assert_contains "zero transcript usage ($run)" "$(strip_ansi "$OUT")" "token 0"; fi
   done
 done
@@ -151,18 +151,25 @@ assert_contains "mode + vim" "$PLAIN" "EDITS [N]"
 assert_contains "current_usage cache fallback 1dp" "$PLAIN" "cache 75.0%"
 assert_contains "subagents 0/2" "$PLAIN" "subagents 0/2"
 assert_contains "sandbox ON" "$PLAIN" "sandbox ON"
-assert_not_contains "absent artifacts hidden" "$PLAIN" "artifacts"
-assert_not_contains "absent tasks hidden" "$PLAIN" "tasks"
+assert_contains "omitted artifacts default to 0" "$PLAIN" "artifacts 0"
+assert_contains "omitted tasks default to 0" "$PLAIN" "tasks 0"
+assert_contains "omitted duration defaults to 0m" "$PLAIN" "0m"
 LINE2=$(printf '%s\n' "$PLAIN" | sed -n '2p')
 assert_contains "wide quotas retain bars" "$LINE2" "█"
 
-# 4. Fresh session collapses to 1 line on BOTH narrow (85) and wide (120) screens
+# 4. Fresh session omits empty quota row (2 lines); disabling row 3 collapses to 1 line
 for cols in 85 120; do
   OUT=$(printf '{"cwd":"/tmp","agent_state":"idle","model":{"display_name":"Gemini 4"},"terminal_width":%d}' "$cols" | "$STATUSLINE")
   PLAIN=$(strip_ansi "$OUT")
-  assert_eq "fresh ${cols} collapses to 1 line" "$(printf '%s\n' "$PLAIN" | wc -l | tr -d ' ')" "1"
-  assert_not_contains "fresh ${cols} omits unknown sandbox" "$PLAIN" "sandbox"
+  assert_eq "fresh ${cols} renders 2 lines (no empty quota row)" "$(printf '%s\n' "$PLAIN" | wc -l | tr -d ' ')" "2"
+  assert_contains "fresh ${cols} shows sandbox OFF" "$PLAIN" "sandbox OFF"
+  assert_contains "fresh ${cols} shows 0m duration" "$PLAIN" "0m"
 done
+CFG_ROW1="${TMP_DIR}/cfg-row1"
+mkdir -p "${CFG_ROW1}/statusline-hud"
+printf '%s\n' '{"showArtifacts":false,"showSubagents":false,"showTasks":false,"showSandbox":false,"showTokens":false,"showCache":false,"showDuration":false,"showCost":false,"showTitle":false}' > "${CFG_ROW1}/statusline-hud/config.json"
+OUT=$(XDG_CONFIG_HOME="$CFG_ROW1" "$STATUSLINE" <<< '{"cwd":"/tmp","agent_state":"idle","model":{"display_name":"Gemini 4"},"terminal_width":120}')
+assert_eq "fresh session with row 3 disabled collapses to 1 line" "$(printf '%s\n' "$(strip_ansi "$OUT")" | wc -l | tr -d ' ')" "1"
 
 # 5. Partial / disabled / remaining_amount quota + reviewing + auto + model.id fallback
 OUT=$(printf '%s' '{
@@ -202,21 +209,18 @@ assert_contains "split 88 preserves AUTO mode" "$PLAIN" "AUTO"
 assert_contains "split 88 keeps running tasks" "$PLAIN" "tasks 1"
 assert_contains "split 88 keeps artifacts" "$PLAIN" "artifacts 2"
 
-# 7. Explicit zero is still data; an absent field is not.
-OUT=$("$STATUSLINE" <<< '{"cwd":"/tmp","artifact_count":0,"subagents":[],"task_count":0,"cost":{"total_usd":0},"context_window":{"used_percentage":0,"total_input_tokens":0,"total_output_tokens":0},"terminal_width":100}')
-PLAIN=$(strip_ansi "$OUT")
-assert_contains "known zero metrics" "$PLAIN" 'artifacts 0 │ subagents 0/0 │ tasks 0 │ token 0 (0↑ 0↓) │ $0.00'
-assert_contains "known zero context" "$PLAIN" '0.0%'
+# 7. Omitted count/state fields render zero/OFF/0m defaults; items without a value stay omitted.
 OUT=$("$STATUSLINE" <<< '{"cwd":"/tmp","terminal_width":120}')
-assert_eq "absent metrics do not create rows" "$(strip_ansi "$OUT")" '  ● READY │ /tmp'
+PLAIN=$(strip_ansi "$OUT")
+assert_eq "omitted wide defaults" "$PLAIN" $'  ● READY │ ctx ░░░░░░░░░░ 0.0% │ /tmp\n  artifacts 0 │ subagents 0/0 │ tasks 0 │ sandbox OFF │ token 0 (0↑ 0↓) │ 0m'
+OUT=$("$STATUSLINE" <<< '{"cwd":"/tmp","terminal_width":80}')
+PLAIN=$(strip_ansi "$OUT")
+assert_eq "omitted narrow defaults" "$PLAIN" $'  ● READY │ ctx 0.0% │ /tmp\n  artifacts 0 │ subagents 0/0 │ tasks 0 │ sandbox OFF │ token 0 │ 0m'
 
 # 8. The same component list is used at both widths, even when it overflows.
-CFG_TITLE="${TMP_DIR}/cfg-title"
-mkdir -p "${CFG_TITLE}/statusline-hud"
-printf '{"showTitle":true}\n' > "${CFG_TITLE}/statusline-hud/config.json"
-OUT=$(XDG_CONFIG_HOME="$CFG_TITLE" "$STATUSLINE" <<< '{"cwd":"/项目/很长的项目名","conversation_title":"✨ 修复标题","task_count":1,"terminal_width":20,"model":{"display_name":"Gemini 4 Neon (XHigh)"},"vcs":{"branch":"feature/很长的分支名"}}')
+OUT=$("$STATUSLINE" <<< '{"cwd":"/项目/很长的项目名","conversation_title":"✨ 修复标题","task_count":1,"terminal_width":20,"model":{"display_name":"Gemini 4 Neon (XHigh)"},"vcs":{"branch":"feature/很长的分支名"}}')
 PLAIN=$(strip_ansi "$OUT")
-assert_eq "no pruning, no separate title row" "$PLAIN" $'  ● READY │ Gemini 4 Neon │ …/很长的项目名 │ feature/很长的分支名\n  tasks 1 │ ▸ ✨ 修复标题'
+assert_eq "no pruning, no separate title row" "$PLAIN" $'  ● READY │ Gemini 4 Neon │ ctx 0.0% │ …/很长的项目名 │ feature/很长的分支名\n  artifacts 0 │ subagents 0/0 │ tasks 1 │ sandbox OFF │ token 0 │ 0m │ ▸ ✨ 修复标题'
 
 # 9. LC_ALL=C locale safety (no broken UTF-8 bar bytes, still shows bar on wide screen)
 OUT=$(LC_ALL=C "$STATUSLINE" <<< '{
@@ -249,14 +253,16 @@ for cols in 99 100; do
   }")
   PLAIN=$(strip_ansi "$OUT")
   if [ "$cols" -eq 99 ]; then
-    assert_eq "narrow delta both directions, stable order" "$PLAIN" $'  ● READY │ /tmp\n  Gemini 5h 50.0%\n  subagents 0/0 │ tasks 2 │ sandbox OFF'
+    assert_eq "narrow delta both directions, stable order" "$PLAIN" $'  ● READY │ ctx 0.0% │ /tmp\n  Gemini 5h 50.0%\n  subagents 0/0 │ tasks 2 │ sandbox OFF │ token 0 │ 0m'
   else
-    assert_eq "ordinary switches at 100 cols" "$PLAIN" $'  ● READY │ /tmp\n  3P 5h 42 left\n  artifacts 1 │ subagents 0/0 │ ▸ My title'
+    assert_eq "ordinary switches at 100 cols" "$PLAIN" $'  ● READY │ ctx ░░░░░░░░░░ 0.0% │ /tmp\n  3P 5h 42 left\n  artifacts 1 │ subagents 0/0 │ token 0 (0↑ 0↓) │ 0m │ ▸ My title'
   fi
 done
 
 # 12. Empty narrow inherits all ordinary flags; an empty quota row has no placeholder.
-for cfg in '{"showModel":false,"showPath":false,"showTitle":true}' '{"showModel":false,"showPath":false,"showTitle":true,"narrow":{}}'; do
+for cfg in \
+  '{"showModel":false,"showContext":false,"showPath":false,"showArtifacts":false,"showSubagents":false,"showTasks":false,"showSandbox":false,"showTokens":false,"showDuration":false}' \
+  '{"showModel":false,"showContext":false,"showPath":false,"showArtifacts":false,"showSubagents":false,"showTasks":false,"showSandbox":false,"showTokens":false,"showDuration":false,"narrow":{}}'; do
   printf '%s\n' "$cfg" > "$CFG_CUSTOM/statusline-hud/config.json"
   OUT=$(XDG_CONFIG_HOME="$CFG_CUSTOM" "$STATUSLINE" <<< '{"cwd":"/tmp","model":{"id":"hidden"},"conversation_title":"Only title","terminal_width":80}')
   assert_eq "ordinary switches inherited without extra separators" "$(strip_ansi "$OUT")" $'  ● READY\n  ▸ Only title'
@@ -295,7 +301,7 @@ mkdir -p "${CFG_BAD}/statusline-hud"
 printf '{not valid json,,,' > "${CFG_BAD}/statusline-hud/config.json"
 OUT=$(XDG_CONFIG_HOME="$CFG_BAD" "$STATUSLINE" <<< '{
   "cwd":"/tmp",
-  "conversation_title":"Hidden by default",
+  "conversation_title":"Shown by default",
   "agent_state":"working",
   "cycle_mode":"plan",
   "model":{"display_name":"Gemini 4"},
@@ -303,10 +309,10 @@ OUT=$(XDG_CONFIG_HOME="$CFG_BAD" "$STATUSLINE" <<< '{
 }')
 PLAIN=$(strip_ansi "$OUT")
 assert_contains "broken config falls back cleanly" "$PLAIN" "PLAN"
-assert_not_contains "broken config uses default showTitle=false" "$PLAIN" "Hidden by default"
+assert_contains "broken config uses default showTitle=true" "$PLAIN" "▸ Shown by default"
 
 # 15. ANSI escape & control character sanitization in untrusted strings
-OUT=$(XDG_CONFIG_HOME="$CFG_TITLE" "$STATUSLINE" <<< '{
+OUT=$("$STATUSLINE" <<< '{
   "cwd":"/tmp/dir\u001b[31mred",
   "conversation_title":"clean \u001b[31mRED\u001b[0m \u001b]0;pwn\u0007 title",
   "agent_state":"idle",
@@ -344,7 +350,7 @@ HUD_CFG_HOME="${TMP_DIR}/hud-ctl-cfg"
 HUD_SETTINGS="${TMP_DIR}/hud-settings.json"
 DOC_FIRST=$(XDG_CONFIG_HOME="$HUD_CFG_HOME" HUD_SETTINGS_FILE="$HUD_SETTINGS" "$HUD_CTL" doctor)
 assert_contains "first run explains activation" "$DOC_FIRST" $'Environment ready; HUD not enabled yet\n  activate: /statusline '
-assert_contains "default narrow displays inherit" "$DOC_FIRST" "showTitle       = [OFF]  narrow=inherit"
+assert_contains "default narrow displays inherit" "$DOC_FIRST" "showTitle       = [ON]   narrow=inherit"
 FIRST_PREVIEW=$(XDG_CONFIG_HOME="$HUD_CFG_HOME" "$HUD_CTL" preview 80)
 assert_contains "narrow preview shows status" "$FIRST_PREVIEW" "WORKING"
 assert_not_contains "narrow preview uses short text" "$FIRST_PREVIEW" "█"
@@ -365,15 +371,16 @@ assert_contains "doctor detects OTHER COMMAND" "$DOC_OUT" "OTHER COMMAND"
 assert_contains "doctor detects enabled=false" "$DOC_OUT" "statusLine.enabled is false"
 assert_contains "doctor detects stack_with_default" "$DOC_OUT" "stack_with_default is true"
 assert_contains "doctor smoke passes" "$DOC_OUT" "smoke:    OK"
-assert_contains "doctor lists default showTitle OFF" "$DOC_OUT" "showTitle       = [OFF]"
+assert_contains "doctor lists default showTitle ON" "$DOC_OUT" "showTitle       = [ON]"
 
 # A narrow toggle uses its inherited value; writes do not affect the ordinary setting.
-SET_OUT=$(XDG_CONFIG_HOME="$HUD_CFG_HOME" "$HUD_CTL" set showTitle=true showCost=false narrow.showTasks=false)
-assert_contains "set updates showTitle" "$SET_OUT" "showTitle       = [ON]"
-TOG_OUT=$(XDG_CONFIG_HOME="$HUD_CFG_HOME" "$HUD_CTL" toggle narrow.showCost showPath)
+SET_OUT=$(XDG_CONFIG_HOME="$HUD_CFG_HOME" "$HUD_CTL" set showTitle=false showCost=false narrow.showTasks=false)
+assert_contains "set updates showTitle" "$SET_OUT" "showTitle       = [OFF]"
+TOG_OUT=$(XDG_CONFIG_HOME="$HUD_CFG_HOME" "$HUD_CTL" toggle narrow.showCost showTitle showPath)
 assert_contains "toggle reports inherited false flipped to true" "$TOG_OUT" 'showCost        = [OFF]  narrow=[ON]'
+assert_contains "toggle flips showTitle back to ON" "$TOG_OUT" 'showTitle       = [ON]   narrow=inherit'
 PREV_OUT=$(XDG_CONFIG_HOME="$HUD_CFG_HOME" "$HUD_CTL" preview 80)
-assert_contains "narrow toggle enables cost" "$PREV_OUT" '~$0.42 │ ▸ Refactor statusline layout'
+assert_contains "narrow toggle enables cost" "$PREV_OUT" '0m │ ~$0.42 │ ▸ Refactor statusline layout'
 assert_not_contains "narrow hides tasks" "$PREV_OUT" 'tasks 1'
 assert_not_contains "preview strips ANSI" "$PREV_OUT" $'\033['
 PREV_OUT=$(XDG_CONFIG_HOME="$HUD_CFG_HOME" "$HUD_CTL" preview 120)
@@ -393,6 +400,8 @@ assert_contains "unset showCost and narrow restores defaults" "$UNSET_ALL" 'show
 assert_eq "unset narrow removes narrow key" "$(jq 'has("narrow")' "${HUD_CFG_HOME}/statusline-hud/config.json")" "false"
 OUT=$("$STATUSLINE" <<< '{"sandbox":{"enabled":false},"workspace":{"sandbox":{"enabled":true}}}')
 assert_contains "top-level false wins over workspace true" "$(strip_ansi "$OUT")" "sandbox OFF"
+OUT=$("$STATUSLINE" <<< '{}')
+assert_contains "omitted sandbox defaults to OFF" "$(strip_ansi "$OUT")" "sandbox OFF"
 
 # invalid key/value rejected without corrupting config.json
 if XDG_CONFIG_HOME="$HUD_CFG_HOME" "$HUD_CTL" set unknownKey=true >/dev/null 2>&1; then
@@ -438,7 +447,7 @@ for bad_cfg in '' '{}{}' '{broken json'; do
   fi
 done
 RST_OUT=$(XDG_CONFIG_HOME="$HUD_CFG_HOME" "$HUD_CTL" reset)
-assert_contains "reset restores defaults" "$RST_OUT" "showTitle       = [OFF]"
+assert_contains "reset restores defaults" "$RST_OUT" "showTitle       = [ON]"
 
 # invalid statusLine type emits activate hint only once
 printf '{"statusLine":"bad"}\n' > "$TMP_DIR/bad-sl.json"

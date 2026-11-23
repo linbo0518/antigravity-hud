@@ -40,8 +40,8 @@ Location: `${XDG_CONFIG_HOME:-~/.config}/statusline-hud/config.json` (hot-reload
 | 2 | `showGeminiQuota`, `show3pQuota` | Gemini and third-party 5h / weekly quota buckets |
 | 3 | `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showCache`, `showDuration`, `showCost`, `showTitle` | `showSubagents` shows `running/total`; `showDuration` shows elapsed time from transcript; `showTitle` appends `▸ <title>` |
 
-- All switches are booleans defaulting to `true` except `showTitle` (`false`).
-- Disabled or unavailable items are omitted, but reported `0` and `OFF` values are shown. Empty rows take no space.
+- All switches are booleans defaulting to `true`.
+- Enabled count and state items (`showContext`, `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showDuration`) show `0`, `0.0%`, `0m`, or `OFF` even when omitted by the CLI; disabled items, items with no value (such as an untitled session, non-Git path, or unreported quota/cache/cost), and empty rows are omitted.
 - Below 100 columns (`terminal_width < 100`), explicit `narrow` booleans override ordinary switches; missing keys inherit. Short forms (no progress bars or reset times, `wk`, 1-level path, model name without trailing `(effort)`, branch without git counts, token total only) save space without dropping selected items. Long rows may wrap.
 - **Symbols**: Git `*` dirty, `↑`/`↓` ahead/behind, `!` modified/conflicted, `+` added, `✘` deleted, `?` untracked; Quota shows used % (green `<60%`, yellow `60–89%`, red `>=90%`) or `<N> left`; Tokens show `<total> (<in>↑ <out>↓)`.
 
@@ -70,8 +70,8 @@ Run `<skill-dir>/scripts/hud.sh doctor` first so you have ground-truth status fo
      2. **Auto-write `settings.json`**: If the user confirms, run `<skill-dir>/scripts/hud.sh apply-settings` (preserves other settings and `0600` permissions) and remind them to run `/statusline enable` or restart `agy` if it does not refresh immediately.
 3. Offer to run a quick interactive configuration or keep defaults.
 
-#### C. Modify config via natural language (e.g. "hide cost in split panes")
-1. Run `<skill-dir>/scripts/hud.sh set narrow.showCost=false` for that example. Use ordinary keys for all widths unless the user specifies a narrow override; use `toggle` for an explicit flip, and `unset` to restore defaults or narrow inheritance (e.g. `unset narrow.showCost` or `unset narrow`).
+#### C. Modify config via natural language (e.g. "hide/show cost in split panes")
+1. Map hide/show requests to `set` (`<skill-dir>/scripts/hud.sh set narrow.showCost=false` or `set narrow.showCost=true`). Use ordinary keys for all widths unless the user specifies a narrow override; use `toggle` for an explicit flip, and `unset` to remove overrides and restore defaults or narrow `inherit` (e.g. `unset narrow.showCost` or `unset narrow`).
 2. Because `~/.config/statusline-hud/config.json` is outside the workspace, writing may prompt for approval or be blocked in sandboxed modes. If blocked, output the exact ready-to-run `<skill-dir>/scripts/hud.sh ...` command for the user to paste.
 3. Re-run `<skill-dir>/scripts/hud.sh preview <width>` (80 for narrow changes, otherwise 120) to show the updated layout and confirm it hot-reloads automatically without restarting `agy`.
 
@@ -89,7 +89,7 @@ If `doctor` warns about removed keys from v0.1.x (`preset`, `showQuota`, `showAc
 - `showActivity: false` → `showArtifacts=false showSubagents=false showTasks=false`
 - `preset: "minimal"` → disable row 2 and row 3 switches (`showGeminiQuota=false show3pQuota=false showArtifacts=false showSubagents=false showTasks=false showSandbox=false showTokens=false showCache=false showDuration=false showCost=false showTitle=false`)
 - `preset: "compact"` → no separate wide no-bars preset in v0.2.0; compact forms apply automatically below 100 columns
-- `showSandboxOff: false` → known `OFF` states are shown when `showSandbox` is on; set `showSandbox=false` (or `narrow.showSandbox=false`) to hide it
+- `showSandboxOff: false` → `OFF` is shown whenever `showSandbox` is on; set `showSandbox=false` (or `narrow.showSandbox=false`) to hide it
 
 #### F. Extend / Customize Beyond `config.json`
 - Prefer `config.json` for all visibility and narrow-pane overrides so plugin upgrades remain conflict-free.

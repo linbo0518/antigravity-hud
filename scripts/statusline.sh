@@ -82,12 +82,12 @@ JQ_TEXT_LIB='
 row1=(Status Mode Model Context Path Git)
 row2=(GeminiQuota 3pQuota)
 row3=(Artifacts Subagents Tasks Sandbox Tokens Cache Duration Cost Title)
-HIDDEN=" Title " NARROW=1
+HIDDEN=" " NARROW=1
 STATE="idle" CONFIRM_PENDING="false" PENDING_INPUT="0" CYCLE_MODE="" VIM_MODE=""
-USED_TENTHS="" CWD="" PATH_TEXT="" VCS_TYPE="" VCS_BRANCH="" VCS_DIRTY="false"
-SANDBOX="" ARTIFACTS="" SUBAGENT_RUNNING=0 SUBAGENT_TOTAL="" BG_TASKS=""
+USED_TENTHS=0 CWD="" PATH_TEXT="" VCS_TYPE="" VCS_BRANCH="" VCS_DIRTY="false"
+SANDBOX="false" ARTIFACTS=0 SUBAGENT_RUNNING=0 SUBAGENT_TOTAL=0 BG_TASKS=0
 MODEL="" TITLE_FMT="" CONV_ID="" TRANSCRIPT_PATH=""
-COST_FMT_VAL="" COST_EST="false" TOK_IN="" TOK_OUT="" CUR_CACHE_PCT="--"
+COST_FMT_VAL="" COST_EST="false" TOK_IN=0 TOK_OUT=0 CUR_CACHE_PCT="--"
 GEMINI_5H_TENTHS="--" GEMINI_5H_AMT="--" GEMINI_5H_RESET="--"
 GEMINI_WEEKLY_TENTHS="--" GEMINI_WEEKLY_AMT="--" GEMINI_WEEKLY_RESET="--"
 THIRD_PARTY_5H_TENTHS="--" THIRD_PARTY_5H_AMT="--" THIRD_PARTY_5H_RESET="--"
@@ -103,12 +103,10 @@ done < <(
 
     def is_num: (type == "number") and (isnan | not) and (isinfinite | not);
     # Cap at 1e15 and normalize -0 so jq always emits plain decimal non-negative integers.
-    def uint_or($fallback): if is_num and . >= 0 and . <= 1e15 then (floor | if . == 0 then 0 else . end) else $fallback end;
-    def clean_uint: uint_or(0);
-    def reported_uint: uint_or("");
+    def clean_uint: if is_num and . >= 0 and . <= 1e15 then (floor | if . == 0 then 0 else . end) else 0 end;
     def clamp_pct_tenths:
       if is_num then (if . <= 0 then 0 elif . >= 100 then 1000 else (. * 10 | round) end)
-      else "" end;
+      else 0 end;
     def fmt_tenths: "\(. / 10 | floor).\(. % 10)";
     def fmt_usd:
       if is_num and . >= 0 and . <= 1e12 then
@@ -171,7 +169,7 @@ done < <(
         else "--" end;
 
     ((.terminal_width? | clean_uint) < 100) as $narrow
-    | ({showTitle:false} + ($cfg | switches) + (if $narrow then ($cfg.narrow | switches) else {} end)) as $opts
+    | (($cfg | switches) + (if $narrow then ($cfg.narrow | switches) else {} end)) as $opts
     | ((.workspace?.current_dir? // .cwd? // "") | clean_str | if . == "" then ($fallback_pwd | clean_str) else . end) as $cwd
     | kv("NARROW"; (if $narrow then 1 else 0 end))
     + kv("HIDDEN"; " " + ($modules | split(" ") | map(select(. != "Status" and $opts["show" + .] == false)) | join(" ")) + " ")
@@ -186,12 +184,12 @@ done < <(
     + kv("VCS_TYPE"; (.vcs?.type? | clean_str))
     + kv("VCS_BRANCH"; ((.vcs?.branch? // .workspace?.vcs?.branch? // "") | clean_str))
     + kv("VCS_DIRTY"; ((.vcs?.dirty? // .workspace?.vcs?.dirty? // false) == true))
-    + kv("SANDBOX"; [(.sandbox?.enabled?, .workspace?.sandbox?.enabled?) | booleans][0])
-    + kv("ARTIFACTS"; (.artifact_count? | reported_uint))
+    + kv("SANDBOX"; ([(.sandbox?.enabled?, .workspace?.sandbox?.enabled?) | booleans][0] // false))
+    + kv("ARTIFACTS"; (.artifact_count? | clean_uint))
     + kv("SUBAGENT_RUNNING"; (if (.subagents | type) == "array"
         then ([.subagents[] | select(type == "object" and .status == "running")] | length) else 0 end))
-    + kv("SUBAGENT_TOTAL"; (if (.subagents | type) == "array" then (.subagents | length) else "" end))
-    + kv("BG_TASKS"; (.task_count? | reported_uint))
+    + kv("SUBAGENT_TOTAL"; (if (.subagents | type) == "array" then (.subagents | length) else 0 end))
+    + kv("BG_TASKS"; (.task_count? | clean_uint))
     + kv("MODEL"; ((.model?.display_name? // .model?.id? // "") | clean_str |
         if $narrow then sub(" \\([^()]+\\)$"; "") else . end))
     + kv("TITLE_FMT"; (.conversation_title? | clean_title))
@@ -199,8 +197,8 @@ done < <(
     + kv("TRANSCRIPT_PATH"; (.transcript_path? | clean_str))
     + kv("COST_FMT_VAL"; ((.cost?.total_usd? // .cost?.total_cost_usd?) | fmt_usd))
     + kv("COST_EST"; (.cost?.estimated? == true))
-    + kv("TOK_IN"; (.context_window?.total_input_tokens? | reported_uint))
-    + kv("TOK_OUT"; (.context_window?.total_output_tokens? | reported_uint))
+    + kv("TOK_IN"; (.context_window?.total_input_tokens? | clean_uint))
+    + kv("TOK_OUT"; (.context_window?.total_output_tokens? | clean_uint))
     + kv("CUR_CACHE_PCT"; cur_cache_pct)
     + quota("GEMINI_5H_TENTHS"; "GEMINI_5H_AMT"; "GEMINI_5H_RESET"; "gemini-5h")
     + quota("GEMINI_WEEKLY_TENTHS"; "GEMINI_WEEKLY_AMT"; "GEMINI_WEEKLY_RESET"; "gemini-weekly")
@@ -573,10 +571,8 @@ fi
 partModel="" partContext="" partPath="" partGit=""
 [ -z "$MODEL" ] || partModel="${FG_BRIGHT_MAGENTA}${I}${MODEL}${R}"
 [ -z "$PATH_TEXT" ] || partPath="${FG_CYAN}${PATH_TEXT}${R}"
-if [ -n "$USED_TENTHS" ]; then
-  usage_bar partContext "$USED_TENTHS"
-  partContext="${FG_GRAY}ctx ${partContext}"
-fi
+usage_bar partContext "$USED_TENTHS"
+partContext="${FG_GRAY}ctx ${partContext}"
 
 GIT_AHEAD=0 GIT_BEHIND=0 GIT_MOD=0 GIT_ADD=0 GIT_DEL=0 GIT_UNTRACKED=0
 if visible Git; then
@@ -602,34 +598,35 @@ format_quota_pair partGeminiQuota Gemini "$GEMINI_5H_TENTHS" "$GEMINI_5H_AMT" "$
 format_quota_pair part3pQuota 3P "$THIRD_PARTY_5H_TENTHS" "$THIRD_PARTY_5H_AMT" "$THIRD_PARTY_5H_RESET" \
   "$THIRD_PARTY_WEEKLY_TENTHS" "$THIRD_PARTY_WEEKLY_AMT" "$THIRD_PARTY_WEEKLY_RESET"
 
-partArtifacts="" partSubagents="" partTasks="" partSandbox="" partTitle=""
-[ -z "$ARTIFACTS" ] || fmt_metric partArtifacts artifacts "$ARTIFACTS"
-[ -z "$SUBAGENT_TOTAL" ] || fmt_metric partSubagents subagents "$SUBAGENT_RUNNING/$SUBAGENT_TOTAL"
-[ -z "$BG_TASKS" ] || fmt_metric partTasks tasks "$BG_TASKS"
-case "$SANDBOX" in
-  true) partSandbox="${FG_GRAY}sandbox ${FG_BRIGHT_GREEN}${B}ON${R}" ;;
-  false) partSandbox="${FG_GRAY}sandbox OFF${R}" ;;
-esac
+partTitle=""
+fmt_metric partArtifacts artifacts "$ARTIFACTS"
+fmt_metric partSubagents subagents "$SUBAGENT_RUNNING/$SUBAGENT_TOTAL"
+fmt_metric partTasks tasks "$BG_TASKS"
+if [ "$SANDBOX" = "true" ]; then
+  partSandbox="${FG_GRAY}sandbox ${FG_BRIGHT_GREEN}${B}ON${R}"
+else
+  partSandbox="${FG_GRAY}sandbox OFF${R}"
+fi
 [ -z "$TITLE_FMT" ] || partTitle="${FG_GRAY}▸ ${FG_WHITE}${TITLE_FMT}${R}"
 
-partTokens="" partCache="" partDuration="" partCost=""
+partCache="" partCost=""
 SESSION_CACHE_PCT="--" SESSION_FIRST_TS=0 DISP_IN="$TOK_IN" DISP_OUT="$TOK_OUT"
 if visible Tokens || visible Cache || visible Duration; then load_session_tokens; fi
-if [ -n "$DISP_IN$DISP_OUT" ]; then
-  fmt_tokens total "$(( DISP_IN + DISP_OUT ))"
-  fmt_metric partTokens token "$total"
-  if [ "$NARROW" -eq 0 ]; then
-    fmt_tokens input "${DISP_IN:-0}"
-    fmt_tokens output "${DISP_OUT:-0}"
-    partTokens+=" ${FG_GRAY}(${input}↑ ${output}↓)${R}"
-  fi
+fmt_tokens total "$(( DISP_IN + DISP_OUT ))"
+fmt_metric partTokens token "$total"
+if [ "$NARROW" -eq 0 ]; then
+  fmt_tokens input "$DISP_IN"
+  fmt_tokens output "$DISP_OUT"
+  partTokens+=" ${FG_GRAY}(${input}↑ ${output}↓)${R}"
 fi
 [ "$SESSION_CACHE_PCT" != "--" ] || SESSION_CACHE_PCT="$CUR_CACHE_PCT"
 [ "$SESSION_CACHE_PCT" = "--" ] || fmt_metric partCache cache "${SESSION_CACHE_PCT}%"
 if [ "$SESSION_FIRST_TS" -gt 0 ] && [ "$NOW_EPOCH" -ge "$SESSION_FIRST_TS" ]; then
   fmt_duration partDuration "$((NOW_EPOCH - SESSION_FIRST_TS))"
-  partDuration="${FG_GRAY}${partDuration}${R}"
+else
+  partDuration="0m"
 fi
+partDuration="${FG_GRAY}${partDuration}${R}"
 if [ -n "$COST_FMT_VAL" ]; then
   prefix='$'
   [ "$COST_EST" != true ] || prefix='~$'
