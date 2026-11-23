@@ -58,7 +58,7 @@ if [ -r "$CONFIG_FILE" ]; then
   JQ_CFG_ARGS=(--rawfile cfg_raw "$CONFIG_FILE" --arg home "${HOME:-}" --arg fallback_pwd "${PWD:-}")
 fi
 
-# Shared jq helpers for ANSI/control stripping and Unicode terminal cell widths.
+# Shared cleanup for CLI values and Git branch names.
 JQ_TEXT_LIB='
   def strip_ansi:
     gsub("\u001b\\[[0-9;?]*[ -/]*[@-~]"; "")
@@ -76,82 +76,18 @@ JQ_TEXT_LIB='
       | gsub("[\u0000-\u001f\u007f-\u009f]"; "")
       | gsub("  +"; " ") | sub("^ "; "") | sub(" $"; "")
     else "" end;
-
-  # Approximate terminal cell width for Unicode codepoints (CJK / fullwidth / wide emoji).
-  def cp_w:
-    if (. < 32) or (. >= 127 and . < 160) then 0
-    elif (. >= 768 and . <= 879)
-      or (. >= 8203 and . <= 8207)
-      or (. >= 65024 and . <= 65039)
-    then 0
-    elif (. >= 4352 and . <= 4447)
-      or (. == 8986 or . == 8987)
-      or (. == 9001 or . == 9002)
-      or (. >= 9193 and . <= 9196)
-      or (. == 9200 or . == 9203)
-      or (. == 9725 or . == 9726)
-      or (. == 9748 or . == 9749)
-      or (. >= 9800 and . <= 9811)
-      or (. == 9855 or . == 9875 or . == 9889 or . == 9898 or . == 9899)
-      or (. == 9917 or . == 9918 or . == 9924 or . == 9925 or . == 9934 or . == 9940)
-      or (. == 9962 or . == 9970 or . == 9971 or . == 9973 or . == 9978 or . == 9981)
-      or (. == 9989 or . == 9994 or . == 9995 or . == 10024 or . == 10060 or . == 10062)
-      or (. >= 10067 and . <= 10069)
-      or (. == 10071)
-      or (. >= 10133 and . <= 10135)
-      or (. == 10160 or . == 10175)
-      or (. == 11035 or . == 11036 or . == 11088 or . == 11093)
-      or (. >= 11904 and . <= 12350)
-      or (. >= 12352 and . <= 42191)
-      or (. >= 44032 and . <= 55203)
-      or (. >= 63744 and . <= 64255)
-      or (. >= 65040 and . <= 65135)
-      or (. >= 65280 and . <= 65376)
-      or (. >= 65504 and . <= 65510)
-      or (. >= 127744 and . <= 129791)
-      or (. >= 131072 and . <= 262141)
-    then 2
-    else 1 end;
-
-  def disp_w:
-    explode | reduce .[] as $c (0; . + ($c | cp_w));
-
-  def trunc_w($max):
-    if $max <= 0 then ""
-    elif disp_w <= $max then .
-    elif $max == 1 then "…"
-    else
-      (reduce (explode[]) as $c (
-        {cps: [], w: 0, done: false};
-        if .done then .
-        else
-          ($c | cp_w) as $cw
-          | if (.w + $cw) <= ($max - 1) then
-              .cps += [$c] | .w += $cw
-            else
-              .done = true
-            end
-        end
-      ) | .cps | implode) + "…"
-    end;
 '
 
 # ─── Parse stdin & config.json (Single jq pass, NUL-delimited KV stream) ─────
-# Single source of truth for config defaults; jq emits CFG_* only on valid overrides.
-CFG_PRESET="standard"
-CFG_SHOW_TITLE="0" CFG_SHOW_MODE="1" CFG_SHOW_PATH="1" CFG_SHOW_GIT="1"
-CFG_SHOW_QUOTA="1" CFG_SHOW_3P_QUOTA="1" CFG_SHOW_ACTIVITY="1" CFG_SHOW_SANDBOX_OFF="0"
-CFG_SHOW_TOKENS="1" CFG_SHOW_CACHE="1" CFG_SHOW_DURATION="1" CFG_SHOW_COST="1"
-
-STATE="idle" CONFIRM_PENDING="false" PENDING_INPUT="0"
-CYCLE_MODE="" VIM_MODE=""
-USED_TENTHS="0" CWD=""
-CWD_L2="" CWD_L2_W="0" CWD_L1="" CWD_L1_W="0" CWD_SHORT="" CWD_SHORT_W="0"
-VCS_TYPE="" VCS_BRANCH="" VCS_DIRTY="false" SANDBOX="false"
-ARTIFACTS="0" SUBAGENT_RUNNING="0" SUBAGENT_TOTAL="0" BG_TASKS="0"
-MODEL="" MODEL_W="0" MODEL_SHORT="" MODEL_SHORT_W="0"
-TITLE_FMT="" COLS="80" CONV_ID="" TRANSCRIPT_PATH=""
-COST_FMT_VAL="" COST_EST="false" TOK_IN="0" TOK_OUT="0" CUR_CACHE_PCT="--"
+row1=(Status Mode Model Context Path Git)
+row2=(GeminiQuota 3pQuota)
+row3=(Artifacts Subagents Tasks Sandbox Tokens Cache Duration Cost Title)
+HIDDEN=" Title " NARROW=1
+STATE="idle" CONFIRM_PENDING="false" PENDING_INPUT="0" CYCLE_MODE="" VIM_MODE=""
+USED_TENTHS="" CWD="" PATH_TEXT="" VCS_TYPE="" VCS_BRANCH="" VCS_DIRTY="false"
+SANDBOX="" ARTIFACTS="" SUBAGENT_RUNNING=0 SUBAGENT_TOTAL="" BG_TASKS=""
+MODEL="" TITLE_FMT="" CONV_ID="" TRANSCRIPT_PATH=""
+COST_FMT_VAL="" COST_EST="false" TOK_IN="" TOK_OUT="" CUR_CACHE_PCT="--"
 GEMINI_5H_TENTHS="--" GEMINI_5H_AMT="--" GEMINI_5H_RESET="--"
 GEMINI_WEEKLY_TENTHS="--" GEMINI_WEEKLY_AMT="--" GEMINI_WEEKLY_RESET="--"
 THIRD_PARTY_5H_TENTHS="--" THIRD_PARTY_5H_AMT="--" THIRD_PARTY_5H_RESET="--"
@@ -160,29 +96,23 @@ THIRD_PARTY_WEEKLY_TENTHS="--" THIRD_PARTY_WEEKLY_AMT="--" THIRD_PARTY_WEEKLY_RE
 while IFS= read -r -d '' _k && IFS= read -r -d '' _v; do
   printf -v "$_k" '%s' "$_v"
 done < <(
-  jq -j "${JQ_CFG_ARGS[@]}" "${JQ_TEXT_LIB}"'
+  jq -j --arg modules "${row1[*]} ${row2[*]} ${row3[*]}" "${JQ_CFG_ARGS[@]}" "${JQ_TEXT_LIB}"'
     (($cfg_raw | fromjson? | objects) // {}) as $cfg |
     def kv($k; $v): "\($k)\u0000\($v)\u0000";
-    def cfg_bool($var; $k):
-      if ($cfg[$k] | type) == "boolean" then kv($var; (if $cfg[$k] then 1 else 0 end))
-      else "" end;
-    def cfg_preset:
-      ($cfg.preset? // "") as $p
-      | if ($p == "standard" or $p == "compact" or $p == "minimal") then kv("CFG_PRESET"; $p)
-        else "" end;
+    def switches: if type == "object" then with_entries(select(.value | type == "boolean")) else {} end;
 
     def is_num: (type == "number") and (isnan | not) and (isinfinite | not);
     # Cap at 1e15 and normalize -0 so jq always emits plain decimal non-negative integers.
-    def clean_uint: if is_num and . >= 0 and . <= 1e15 then (floor | if . == 0 then 0 else . end) else 0 end;
+    def uint_or($fallback): if is_num and . >= 0 and . <= 1e15 then (floor | if . == 0 then 0 else . end) else $fallback end;
+    def clean_uint: uint_or(0);
+    def reported_uint: uint_or("");
     def clamp_pct_tenths:
       if is_num then (if . <= 0 then 0 elif . >= 100 then 1000 else (. * 10 | round) end)
-      else 0 end;
+      else "" end;
     def fmt_tenths: "\(. / 10 | floor).\(. % 10)";
     def fmt_usd:
-      if is_num and . > 0 and . <= 1e12 then
-        (. * 100 | round) as $c
-        | if $c > 0 then "\($c / 100 | floor).\(($c % 100) | tostring | if length == 1 then "0" + . else . end)"
-          else "" end
+      if is_num and . >= 0 and . <= 1e12 then
+        (. * 100 | round) as $c | "\($c / 100 | floor).\(($c % 100) | tostring | if length == 1 then "0" + . else . end)"
       else "" end;
 
     def fmt_cwd($max_levels):
@@ -240,29 +170,11 @@ done < <(
             else "--" end
         else "--" end;
 
-    ((.terminal_width? | clean_uint) | if . < 20 then 80 else . end) as $cols
-    | ((.workspace?.current_dir? // .cwd? // "") | clean_str | if . == "" then $fallback_pwd else . end) as $cwd
-    | ($cwd | fmt_cwd(2)) as $cwd2
-    | ($cwd | fmt_cwd(1)) as $cwd1
-    | ($cwd1 | trunc_w(20)) as $cwds
-    | ((.model?.display_name? // .model?.id? // "") | clean_str) as $model
-    | ($model | trunc_w(18)) as $models
-    | (.conversation_title? | clean_title) as $title
-    | (if $title != "" then ($title | trunc_w($cols - 4)) else "" end) as $title_fmt
-
-    | cfg_preset
-    + cfg_bool("CFG_SHOW_TITLE"; "showTitle")
-    + cfg_bool("CFG_SHOW_MODE"; "showMode")
-    + cfg_bool("CFG_SHOW_PATH"; "showPath")
-    + cfg_bool("CFG_SHOW_GIT"; "showGit")
-    + cfg_bool("CFG_SHOW_QUOTA"; "showQuota")
-    + cfg_bool("CFG_SHOW_3P_QUOTA"; "show3pQuota")
-    + cfg_bool("CFG_SHOW_ACTIVITY"; "showActivity")
-    + cfg_bool("CFG_SHOW_SANDBOX_OFF"; "showSandboxOff")
-    + cfg_bool("CFG_SHOW_TOKENS"; "showTokens")
-    + cfg_bool("CFG_SHOW_CACHE"; "showCache")
-    + cfg_bool("CFG_SHOW_DURATION"; "showDuration")
-    + cfg_bool("CFG_SHOW_COST"; "showCost")
+    ((.terminal_width? | clean_uint) < 100) as $narrow
+    | ({showTitle:false} + ($cfg | switches) + (if $narrow then ($cfg.narrow | switches) else {} end)) as $opts
+    | ((.workspace?.current_dir? // .cwd? // "") | clean_str | if . == "" then ($fallback_pwd | clean_str) else . end) as $cwd
+    | kv("NARROW"; (if $narrow then 1 else 0 end))
+    + kv("HIDDEN"; " " + ($modules | split(" ") | map(select(. != "Status" and $opts["show" + .] == false)) | join(" ")) + " ")
     + kv("STATE"; ((.agent_state // "idle") | tostring | clean_str | if . == "" then "idle" else . end))
     + kv("CONFIRM_PENDING"; (.tool_confirmation_pending? == true))
     + kv("PENDING_INPUT"; (.pending_input_count? | clean_uint))
@@ -270,34 +182,25 @@ done < <(
     + kv("VIM_MODE"; (.vim?.mode? | clean_str))
     + kv("USED_TENTHS"; (.context_window?.used_percentage? | clamp_pct_tenths))
     + kv("CWD"; $cwd)
-    + kv("CWD_L2"; $cwd2)
-    + kv("CWD_L2_W"; ($cwd2 | disp_w))
-    + kv("CWD_L1"; $cwd1)
-    + kv("CWD_L1_W"; ($cwd1 | disp_w))
-    + kv("CWD_SHORT"; $cwds)
-    + kv("CWD_SHORT_W"; ($cwds | disp_w))
+    + kv("PATH_TEXT"; ($cwd | fmt_cwd(if $narrow then 1 else 2 end)))
     + kv("VCS_TYPE"; (.vcs?.type? | clean_str))
     + kv("VCS_BRANCH"; ((.vcs?.branch? // .workspace?.vcs?.branch? // "") | clean_str))
     + kv("VCS_DIRTY"; ((.vcs?.dirty? // .workspace?.vcs?.dirty? // false) == true))
-    + kv("SANDBOX"; ((.sandbox?.enabled? // .workspace?.sandbox?.enabled? // false) == true))
-    + kv("ARTIFACTS"; (.artifact_count? | clean_uint))
+    + kv("SANDBOX"; [(.sandbox?.enabled?, .workspace?.sandbox?.enabled?) | booleans][0])
+    + kv("ARTIFACTS"; (.artifact_count? | reported_uint))
     + kv("SUBAGENT_RUNNING"; (if (.subagents | type) == "array"
-        then ([.subagents[] | select(type == "object" and .status == "running")] | length)
-        else 0 end))
-    + kv("SUBAGENT_TOTAL"; (if (.subagents | type) == "array" then (.subagents | length) else 0 end))
-    + kv("BG_TASKS"; (.task_count? | clean_uint))
-    + kv("MODEL"; $model)
-    + kv("MODEL_W"; ($model | disp_w))
-    + kv("MODEL_SHORT"; $models)
-    + kv("MODEL_SHORT_W"; ($models | disp_w))
-    + kv("TITLE_FMT"; $title_fmt)
-    + kv("COLS"; $cols)
+        then ([.subagents[] | select(type == "object" and .status == "running")] | length) else 0 end))
+    + kv("SUBAGENT_TOTAL"; (if (.subagents | type) == "array" then (.subagents | length) else "" end))
+    + kv("BG_TASKS"; (.task_count? | reported_uint))
+    + kv("MODEL"; ((.model?.display_name? // .model?.id? // "") | clean_str |
+        if $narrow then sub(" \\([^()]+\\)$"; "") else . end))
+    + kv("TITLE_FMT"; (.conversation_title? | clean_title))
     + kv("CONV_ID"; ((.conversation_id? // .session_id? // "") | clean_str))
     + kv("TRANSCRIPT_PATH"; (.transcript_path? | clean_str))
-    + kv("COST_FMT_VAL"; ((.cost?.total_usd? // .cost?.total_cost_usd? // 0) | fmt_usd))
+    + kv("COST_FMT_VAL"; ((.cost?.total_usd? // .cost?.total_cost_usd?) | fmt_usd))
     + kv("COST_EST"; (.cost?.estimated? == true))
-    + kv("TOK_IN"; (.context_window?.total_input_tokens? | clean_uint))
-    + kv("TOK_OUT"; (.context_window?.total_output_tokens? | clean_uint))
+    + kv("TOK_IN"; (.context_window?.total_input_tokens? | reported_uint))
+    + kv("TOK_OUT"; (.context_window?.total_output_tokens? | reported_uint))
     + kv("CUR_CACHE_PCT"; cur_cache_pct)
     + quota("GEMINI_5H_TENTHS"; "GEMINI_5H_AMT"; "GEMINI_5H_RESET"; "gemini-5h")
     + quota("GEMINI_WEEKLY_TENTHS"; "GEMINI_WEEKLY_AMT"; "GEMINI_WEEKLY_RESET"; "gemini-weekly")
@@ -305,12 +208,6 @@ done < <(
     + quota("THIRD_PARTY_WEEKLY_TENTHS"; "THIRD_PARTY_WEEKLY_AMT"; "THIRD_PARTY_WEEKLY_RESET"; "3p-weekly")
   ' 2>/dev/null
 )
-
-MAX_W=$((COLS - 2))
-SHOW_BARS=1
-if [ "$COLS" -lt 100 ] || [ "$CFG_PRESET" = "compact" ]; then
-  SHOW_BARS=0
-fi
 
 # ─── Helpers (Outvar pattern avoids subshell forks) ──────────────────────────
 is_uints() {
@@ -320,60 +217,17 @@ is_uints() {
   done
 }
 
-# Measure printable text and optionally compute a width-bounded truncation.
-# Fast path stays zero-fork for pure printable ASCII; falls back to jq for non-ASCII or control chars.
-measure_and_trunc() {
-  local _out_clean="$1" _out_w="$2" _out_s="$3" _out_sw="$4" s="$5" limit="$6"
-  local _ascii_re='^[ !-~]*$'
-  if [[ "$s" =~ $_ascii_re ]]; then
-    local len=${#s}
-    printf -v "$_out_clean" '%s' "$s"
-    printf -v "$_out_w" '%d' "$len"
-    if [ "$len" -le "$limit" ]; then
-      printf -v "$_out_s" '%s' "$s"
-      printf -v "$_out_sw" '%d' "$len"
-    else
-      printf -v "$_out_s" '%s…' "${s:0:limit-1}"
-      printf -v "$_out_sw" '%d' "$limit"
-    fi
-    return
-  fi
+visible() { [[ "$HIDDEN" != *" $1 "* ]]; }
 
-  local _c="" _w="" _ts="" _tw=""
-  IFS=$'\t' read -r _c _w _ts _tw < <(
-    jq -nr --arg s "$s" --argjson lim "$limit" "${JQ_TEXT_LIB}"'
-      ($s | clean_str) as $c
-      | ($c | disp_w) as $w
-      | ($c | trunc_w($lim)) as $ts
-      | [$c, $w, $ts, ($ts | disp_w)] | @tsv
-    ' 2>/dev/null
-  ) || true
-  is_uints "$_w" "$_tw" || { _c="$s"; _w=${#s}; _ts="$s"; _tw=${#s}; }
-  printf -v "$_out_clean" '%s' "$_c"
-  printf -v "$_out_w" '%d' "$_w"
-  printf -v "$_out_s" '%s' "$_ts"
-  printf -v "$_out_sw" '%d' "$_tw"
-}
-
-# Join (text, width) pairs with SEP (visible width 3) and output both joined text and total width.
-join_parts() {
-  local _out_s="$1" _out_w="$2" _res="" _w=0 _p _pw
-  shift 2
-  while [ "$#" -ge 2 ]; do
-    _p="$1"
-    _pw="$2"
-    shift 2
-    [ -n "$_p" ] || continue
-    if [ -n "$_res" ]; then
-      _res+="${SEP}${_p}"
-      _w=$((_w + 3 + _pw))
-    else
-      _res="$_p"
-      _w="$_pw"
-    fi
+print_row() {
+  local key var line=""
+  for key in "$@"; do
+    visible "$key" || continue
+    var="part$key"
+    [ -n "${!var}" ] || continue
+    line="${line}${line:+$SEP}${!var}"
   done
-  printf -v "$_out_s" '%s' "$_res"
-  printf -v "$_out_w" '%d' "$_w"
+  if [ -n "$line" ]; then printf '%s\n' "${PAD}${line}"; fi
 }
 
 fmt_tokens() {
@@ -389,12 +243,7 @@ fmt_tokens() {
 }
 
 fmt_duration() {
-  local _out="$1" secs="$2"
-  if [ "$secs" -lt 60 ]; then
-    printf -v "$_out" ''
-    return
-  fi
-  local mins=$((secs / 60))
+  local _out="$1" mins=$(( $2 / 60 ))
   if [ "$mins" -ge 1440 ]; then
     printf -v "$_out" '%sd%sh' "$((mins / 1440))" "$(((mins % 1440) / 60))"
   elif [ "$mins" -ge 60 ]; then
@@ -405,83 +254,39 @@ fmt_duration() {
 }
 
 fmt_metric() {
-  local _out="$1" _out_w="$2" label="$3" val="$4"
-  printf -v "$_out" '%s' "${FG_GRAY}${label} ${NUM_COLOR}${val}${R}"
-  printf -v "$_out_w" '%d' "$(( ${#label} + 1 + ${#val} ))"
+  printf -v "$1" '%s' "${FG_GRAY}$2 ${NUM_COLOR}$3${R}"
 }
 
-# tenths is a pre-clamped integer in 0..1000 representing 0.0%..100.0%.
 usage_bar() {
-  local _out="$1" _out_w="$2" tenths="$3" show_bar="${4:-1}"
-  local pct_fmt="$((tenths / 10)).$((tenths % 10))" bar_color filled
-
-  if [ "$tenths" -ge 900 ]; then
-    bar_color="$FG_BRIGHT_RED"
-  elif [ "$tenths" -ge 600 ]; then
-    bar_color="$FG_BRIGHT_YELLOW"
-  else
-    bar_color="$FG_BRIGHT_GREEN"
+  local out="$1" tenths="$2" color="$FG_BRIGHT_GREEN" bar="" filled
+  if [ "$tenths" -ge 900 ]; then color="$FG_BRIGHT_RED"
+  elif [ "$tenths" -ge 600 ]; then color="$FG_BRIGHT_YELLOW"; fi
+  if [ "$NARROW" -eq 0 ]; then
+    filled=$(( (tenths + 50) / 100 ))
+    bar="${color}${BAR_FULL_STEPS[filled]}${FG_GRAY}${BAR_EMPTY_STEPS[10-filled]} "
   fi
-
-  if [ "$show_bar" -eq 0 ]; then
-    printf -v "$_out" '%s' "${bar_color}${pct_fmt}%${R}"
-    printf -v "$_out_w" '%d' "$(( ${#pct_fmt} + 1 ))"
-    return
-  fi
-
-  filled=$(( (tenths + 50) / 100 ))
-  printf -v "$_out" '%s' "${bar_color}${BAR_FULL_STEPS[filled]}${FG_GRAY}${BAR_EMPTY_STEPS[10-filled]} ${bar_color}${pct_fmt}%${R}"
-  printf -v "$_out_w" '%d' "$(( 12 + ${#pct_fmt} ))"
+  printf -v "$out" '%s' "${bar}${color}$((tenths / 10)).$((tenths % 10))%${R}"
 }
 
-# style: 2 = progress bar + reset, 1 = percentage + (reset), 0 = compact percentage (no reset)
 format_quota_item() {
-  local _out="$1" _out_w="$2" tenths="$3" amt="$4" reset="$5" style="$6"
-  local _val="" _vw=0 show_bar=0
-  [ "$style" -eq 2 ] && show_bar=1
-
-  if [ "$tenths" != "--" ]; then
-    usage_bar _val _vw "$tenths" "$show_bar"
-  elif [ "$amt" != "--" ]; then
-    _val="${NUM_COLOR}${amt} left${R}"
-    _vw=$(( ${#amt} + 5 ))
-  else
-    printf -v "$_out" ''
-    printf -v "$_out_w" '%d' 0
-    return
+  local out="$1" value=""
+  if [ "$2" != "--" ]; then usage_bar value "$2"
+  elif [ "$3" != "--" ]; then value="${NUM_COLOR}$3 left${R}"
   fi
-
-  if [ "$style" -eq 0 ] || [ "$reset" = "--" ]; then
-    printf -v "$_out" '%s' "$_val"
-    printf -v "$_out_w" '%d' "$_vw"
-  elif [ "$style" -eq 1 ]; then
-    printf -v "$_out" '%s' "${_val} ${FG_GRAY}(${reset})${R}"
-    printf -v "$_out_w" '%d' "$(( _vw + 3 + ${#reset} ))"
-  else
-    printf -v "$_out" '%s' "${_val} ${FG_GRAY}${reset}${R}"
-    printf -v "$_out_w" '%d' "$(( _vw + 1 + ${#reset} ))"
+  if [ -n "$value" ] && [ "$NARROW" -eq 0 ] && [ "$4" != "--" ]; then
+    value+=" ${FG_GRAY}$4${R}"
   fi
+  printf -v "$out" '%s' "$value"
 }
 
 format_quota_pair() {
-  local _out="$1" _out_w="$2" label="$3" p5="$4" a5="$5" r5="$6" pw="$7" aw="$8" rw="$9" style="${10}"
-  local _q5="" _w5=0 _qw="" _ww=0 _wk_lbl="week"
-  [ "$style" -eq 0 ] && _wk_lbl="wk"
-  format_quota_item _q5 _w5 "$p5" "$a5" "$r5" "$style"
-  format_quota_item _qw _ww "$pw" "$aw" "$rw" "$style"
-  if [ -n "$_q5" ] && [ -n "$_qw" ]; then
-    printf -v "$_out" '%s' "${FG_GRAY}${label} 5h ${_q5}${FG_GRAY} / ${_wk_lbl} ${_qw}${R}"
-    printf -v "$_out_w" '%d' "$(( ${#label} + 4 + _w5 + 4 + ${#_wk_lbl} + _ww ))"
-  elif [ -n "$_q5" ]; then
-    printf -v "$_out" '%s' "${FG_GRAY}${label} 5h ${_q5}${R}"
-    printf -v "$_out_w" '%d' "$(( ${#label} + 4 + _w5 ))"
-  elif [ -n "$_qw" ]; then
-    printf -v "$_out" '%s' "${FG_GRAY}${label} ${_wk_lbl} ${_qw}${R}"
-    printf -v "$_out_w" '%d' "$(( ${#label} + 2 + ${#_wk_lbl} + _ww ))"
-  else
-    printf -v "$_out" ''
-    printf -v "$_out_w" '%d' 0
-  fi
+  local out="$1" label="$2" five="" week="" pair="" week_label="week"
+  [ "$NARROW" -eq 0 ] || week_label="wk"
+  format_quota_item five "$3" "$4" "$5"
+  format_quota_item week "$6" "$7" "$8"
+  [ -z "$five" ] || pair="5h $five"
+  [ -z "$week" ] || pair+="${pair:+${FG_GRAY} / }${week_label} $week"
+  if [ -n "$pair" ]; then printf -v "$out" '%s' "${FG_GRAY}${label} ${pair}${R}"; fi
 }
 
 maybe_gc_cache() {
@@ -659,7 +464,7 @@ load_session_tokens() {
       if [ -r "$cache_file" ]; then
         read -r c_mtime c_size s_in s_out session_pct first_ts < "$cache_file" || true
         if [ "$c_mtime" = "$mtime" ] && [ "$c_size" = "$size" ] \
-          && is_uints "$s_in" "$s_out" "$first_ts" \
+          && is_uints "$first_ts" && { is_uints "$s_in" "$s_out" || [ "$s_in:$s_out" = '--:--' ]; } \
           && [[ "$session_pct" =~ ^(--|[0-9]+\.[0-9])$ ]]; then
           cache_hit=1
         fi
@@ -673,14 +478,14 @@ load_session_tokens() {
       jq -n -R -r '
         # Rewind can reuse a step_index; both model calls still consumed tokens.
         reduce inputs as $line (
-          {first_ts: 0, total_in: 0, total_out: 0, cache_read: 0, missing_cache: false};
+          {first_ts: 0, total_in: null, total_out: null, cache_read: 0, missing_cache: false};
           (if .first_ts == 0 and ($line | contains("created_at")) then
             (($line | fromjson? | objects | .created_at? | strings | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601?) // 0) as $ts
             | if $ts > 0 then .first_ts = $ts else . end
            else . end)
           | if ($line | contains("PLANNER_RESPONSE")) then
               (($line | fromjson? | objects | select(.type == "PLANNER_RESPONSE")) // null) as $x
-              | if $x != null then
+              | if any($x | .input_tokens, .output_tokens, .cache_read_tokens, .cache_creation_tokens, .cache_creation_input_tokens; type == "number") then
                   (($x.input_tokens // 0) + ($x.cache_read_tokens // 0)
                     + ($x.cache_creation_tokens // $x.cache_creation_input_tokens // 0)) as $input
                   | .total_in += $input
@@ -690,7 +495,7 @@ load_session_tokens() {
                 else . end
             else . end
         )
-        | [.total_in, .total_out,
+        | [.total_in // "--", .total_out // "--",
            (if .total_in > 0 and (.missing_cache | not) then
               (.cache_read * 1000 / .total_in | round) as $t
               | "\($t / 10 | floor).\($t % 10)"
@@ -699,7 +504,7 @@ load_session_tokens() {
       ' < "$tpath" 2>/dev/null
     ) || true
     read -r s_in s_out session_pct first_ts <<< "$parsed" || true
-    is_uints "$s_in" "$s_out" || return 0
+    is_uints "$s_in" "$s_out" || [ "$s_in:$s_out" = '--:--' ] || return 0
     is_uints "$first_ts" || first_ts=0
 
     if [ -n "$cache_file" ]; then
@@ -713,53 +518,46 @@ load_session_tokens() {
   if [ "$first_ts" -gt 0 ]; then
     SESSION_FIRST_TS="$first_ts"
   fi
-  if [ $(( s_in + s_out )) -gt 0 ]; then
+  if [ "$s_in" != '--' ]; then
     DISP_IN="$s_in"
     DISP_OUT="$s_out"
   fi
 }
 
 # ─── Line 1: State, Mode, Model, Context, CWD, VCS ───────────────────────────
-S_W=0
 if [ "$CONFIRM_PENDING" = "true" ]; then
-  S="${FG_BRIGHT_YELLOW}${B}⚠ CONFIRM${R}"
-  S_W=9
+  partStatus="${FG_BRIGHT_YELLOW}${B}⚠ CONFIRM${R}"
 else
   case "$STATE" in
-    idle)           S="${FG_BRIGHT_GREEN}${B}● READY${R}"; S_W=7 ;;
-    working)        S="${FG_BRIGHT_CYAN}${B}⚙ WORKING${R}"; S_W=9 ;;
-    tool_use)       S="${FG_BRIGHT_MAGENTA}${B}🔧 TOOL${R}"; S_W=7 ;;
-    reviewing)      S="${FG_BRIGHT_YELLOW}${B}◈ REVIEW${R}"; S_W=8 ;;
-    error)          S="${FG_BRIGHT_RED}${B}✖ ERROR${R}"; S_W=7 ;;
-    thinking)       S="${FG_BRIGHT_YELLOW}${B}◆ THINKING${R}"; S_W=10 ;;
-    authenticating) S="${FG_WHITE}${B}⏳ AUTH${R}"; S_W=7 ;;
-    initializing)   S="${FG_WHITE}${B}⏳ INIT${R}"; S_W=7 ;;
+    idle)           partStatus="${FG_BRIGHT_GREEN}${B}● READY${R}" ;;
+    working)        partStatus="${FG_BRIGHT_CYAN}${B}⚙ WORKING${R}" ;;
+    tool_use)       partStatus="${FG_BRIGHT_MAGENTA}${B}🔧 TOOL${R}" ;;
+    reviewing)      partStatus="${FG_BRIGHT_YELLOW}${B}◈ REVIEW${R}" ;;
+    error)          partStatus="${FG_BRIGHT_RED}${B}✖ ERROR${R}" ;;
+    thinking)       partStatus="${FG_BRIGHT_YELLOW}${B}◆ THINKING${R}" ;;
+    authenticating) partStatus="${FG_WHITE}${B}⏳ AUTH${R}" ;;
+    initializing)   partStatus="${FG_WHITE}${B}⏳ INIT${R}" ;;
     *)
       _state_up=$(printf '%s' "$STATE" | tr '[:lower:]' '[:upper:]')
-      S="${FG_WHITE}${B}⏳ ${_state_up}${R}"
-      S_W=$(( 3 + ${#_state_up} ))
+      partStatus="${FG_WHITE}${B}⏳ ${_state_up}${R}"
       ;;
   esac
 fi
 if [ "$PENDING_INPUT" -gt 0 ]; then
-  S="${S} ${FG_BRIGHT_YELLOW}(+${PENDING_INPUT})${R}"
-  S_W=$(( S_W + 4 + ${#PENDING_INPUT} ))
+  partStatus="${partStatus} ${FG_BRIGHT_YELLOW}(+${PENDING_INPUT})${R}"
 fi
-
-MODE_FMT="" MODE_W=0
-if [ "$CFG_SHOW_MODE" -eq 1 ]; then
+partMode=""
+if visible Mode; then
   case "$CYCLE_MODE" in
-    plan)         MODE_FMT="${FG_BRIGHT_BLUE}${B}PLAN${R}"; MODE_W=4 ;;
-    accept-edits) MODE_FMT="${FG_BRIGHT_YELLOW}${B}EDITS${R}"; MODE_W=5 ;;
-    auto)         MODE_FMT="${FG_BRIGHT_RED}${B}AUTO${R}"; MODE_W=4 ;;
-    "")           MODE_FMT=""; MODE_W=0 ;;
+    plan)         partMode="${FG_BRIGHT_BLUE}${B}PLAN${R}" ;;
+    accept-edits) partMode="${FG_BRIGHT_YELLOW}${B}EDITS${R}" ;;
+    auto)         partMode="${FG_BRIGHT_RED}${B}AUTO${R}" ;;
+    "")           partMode="" ;;
     *)
       _mode_up=$(printf '%s' "$CYCLE_MODE" | tr '[:lower:]' '[:upper:]')
-      MODE_FMT="${FG_WHITE}${B}${_mode_up}${R}"
-      MODE_W=${#_mode_up}
+      partMode="${FG_WHITE}${B}${_mode_up}${R}"
       ;;
   esac
-
   if [ -n "$VIM_MODE" ]; then
     case "$VIM_MODE" in
       NORMAL)        _vim_tag="N" ;;
@@ -768,259 +566,76 @@ if [ "$CFG_SHOW_MODE" -eq 1 ]; then
       "VISUAL LINE") _vim_tag="VL" ;;
       *)             _vim_tag="$VIM_MODE" ;;
     esac
-    if [ -n "$MODE_FMT" ]; then
-      MODE_FMT="${MODE_FMT} ${FG_BRIGHT_CYAN}[${_vim_tag}]${R}"
-      MODE_W=$(( MODE_W + 3 + ${#_vim_tag} ))
-    else
-      MODE_FMT="${FG_BRIGHT_CYAN}[${_vim_tag}]${R}"
-      MODE_W=$(( 2 + ${#_vim_tag} ))
-    fi
+    partMode+="${partMode:+ }${FG_BRIGHT_CYAN}[${_vim_tag}]${R}"
   fi
 fi
 
-M="" M_SHORT=""
-if [ -n "$MODEL" ]; then
-  M="${FG_BRIGHT_MAGENTA}${I}${MODEL}${R}"
-  M_SHORT="${FG_BRIGHT_MAGENTA}${I}${MODEL_SHORT}${R}"
+partModel="" partContext="" partPath="" partGit=""
+[ -z "$MODEL" ] || partModel="${FG_BRIGHT_MAGENTA}${I}${MODEL}${R}"
+[ -z "$PATH_TEXT" ] || partPath="${FG_CYAN}${PATH_TEXT}${R}"
+if [ -n "$USED_TENTHS" ]; then
+  usage_bar partContext "$USED_TENTHS"
+  partContext="${FG_GRAY}ctx ${partContext}"
 fi
 
 GIT_AHEAD=0 GIT_BEHIND=0 GIT_MOD=0 GIT_ADD=0 GIT_DEL=0 GIT_UNTRACKED=0
-if [ "$CFG_SHOW_GIT" -eq 1 ] && [ -n "$CWD" ] && command -v git >/dev/null 2>&1; then
-  parse_git_status "$CWD"
-elif [ "$CFG_SHOW_GIT" -eq 0 ]; then
-  VCS_BRANCH=""
-fi
-
-VCS_BRANCH_W=0 VCS_BRANCH_SHORT="" VCS_BRANCH_SHORT_W=0
-if [ -n "$VCS_BRANCH" ]; then
-  measure_and_trunc VCS_BRANCH VCS_BRANCH_W VCS_BRANCH_SHORT VCS_BRANCH_SHORT_W "$VCS_BRANCH" 18
-fi
-
-build_line1() {
-  local show_ctx_bar="$1" cwd_mode="$2" git_mode="$3" show_mode="$4" model_mode="$5"
-  local _ctx_bar="" _ctx_bar_w=0 _ctx="" _ctx_w=0
-  local _mode="" _mw=0 _m="" _modw=0 _p="" _pw=0 _v="" _vw=0
-
-  [ "$show_mode" -eq 1 ] && { _mode="$MODE_FMT"; _mw="$MODE_W"; }
-  case "$model_mode" in
-    2) _m="$M"; _modw="$MODEL_W" ;;
-    1) _m="$M_SHORT"; _modw="$MODEL_SHORT_W" ;;
-  esac
-
-  usage_bar _ctx_bar _ctx_bar_w "$USED_TENTHS" "$show_ctx_bar"
-  _ctx="${FG_GRAY}ctx ${_ctx_bar}"
-  _ctx_w=$(( 4 + _ctx_bar_w ))
-
-  if [ "$CFG_SHOW_PATH" -eq 1 ]; then
-    case "$cwd_mode" in
-      2) [ -n "$CWD_L2" ] && { _p="${FG_CYAN}${CWD_L2}${R}"; _pw="$CWD_L2_W"; } ;;
-      1) [ -n "$CWD_L1" ] && { _p="${FG_CYAN}${CWD_L1}${R}"; _pw="$CWD_L1_W"; } ;;
-      s) [ -n "$CWD_SHORT" ] && { _p="${FG_CYAN}${CWD_SHORT}${R}"; _pw="$CWD_SHORT_W"; } ;;
-    esac
-  fi
-
-  if [ "$git_mode" != "0" ] && [ -n "$VCS_BRANCH" ]; then
-    local _br="$VCS_BRANCH" _br_w="$VCS_BRANCH_W" _branch_str _vcs_extra="" _vcs_extra_w=0 _vcs_inds _ind _cnt
-    if [ "$git_mode" = "s" ]; then
-      _br="$VCS_BRANCH_SHORT"
-      _br_w="$VCS_BRANCH_SHORT_W"
+if visible Git; then
+  if [ -n "$CWD" ] && command -v git >/dev/null 2>&1; then parse_git_status "$CWD"; fi
+  if [ -n "$VCS_BRANCH" ]; then
+    if [ "$VCS_DIRTY" = true ]; then partGit="${FG_BRIGHT_RED}${VCS_BRANCH}${FG_BRIGHT_YELLOW}*"
+    else partGit="${FG_BRIGHT_BLUE}${VCS_BRANCH}"; fi
+    if [ "$NARROW" -eq 0 ]; then
+      for ind in "$GIT_AHEAD:${FG_BRIGHT_CYAN}↑" "$GIT_BEHIND:${FG_BRIGHT_CYAN}↓" \
+        "$GIT_MOD:${FG_BRIGHT_YELLOW}!" "$GIT_ADD:${FG_BRIGHT_GREEN}+" \
+        "$GIT_DEL:${FG_BRIGHT_RED}✘" "$GIT_UNTRACKED:${FG_GRAY}?"; do
+        count=${ind%%:*}
+        [ "$count" -eq 0 ] || partGit+=" ${ind#*:}${count}"
+      done
     fi
-    if [ "$VCS_DIRTY" = "true" ]; then
-      _branch_str="${FG_BRIGHT_RED}${_br}${FG_BRIGHT_YELLOW}*"
-      _vw=$(( _br_w + 1 ))
-    else
-      _branch_str="${FG_BRIGHT_BLUE}${_br}"
-      _vw="$_br_w"
-    fi
-    _vcs_inds=(
-      "$GIT_AHEAD:${FG_BRIGHT_CYAN}↑"
-      "$GIT_BEHIND:${FG_BRIGHT_CYAN}↓"
-    )
-    if [ "$git_mode" = "2" ]; then
-      _vcs_inds+=(
-        "$GIT_MOD:${FG_BRIGHT_YELLOW}!"
-        "$GIT_ADD:${FG_BRIGHT_GREEN}+"
-        "$GIT_DEL:${FG_BRIGHT_RED}✘"
-        "$GIT_UNTRACKED:${FG_GRAY}?"
-      )
-    fi
-    for _ind in "${_vcs_inds[@]}"; do
-      _cnt="${_ind%%:*}"
-      if [ "$_cnt" -gt 0 ]; then
-        _vcs_extra+=" ${_ind#*:}${_cnt}"
-        _vcs_extra_w=$(( _vcs_extra_w + 2 + ${#_cnt} ))
-      fi
-    done
-    _v="${_branch_str}${_vcs_extra}${R}"
-    _vw=$(( _vw + _vcs_extra_w ))
-  fi
-
-  join_parts LINE1 LINE1_W "$S" "$S_W" "$_mode" "$_mw" "$_m" "$_modw" "$_ctx" "$_ctx_w" "$_p" "$_pw" "$_v" "$_vw"
-}
-
-LINE1="" LINE1_W=0
-if [ "$SHOW_BARS" -eq 1 ]; then
-  build_line1 1 2 2 1 2
-  [ "$LINE1_W" -gt "$MAX_W" ] && build_line1 1 1 1 1 2
-  [ "$LINE1_W" -gt "$MAX_W" ] && build_line1 0 1 1 1 2
-else
-  build_line1 0 2 2 1 2
-  [ "$LINE1_W" -gt "$MAX_W" ] && build_line1 0 1 1 1 2
-fi
-[ "$LINE1_W" -gt "$MAX_W" ] && build_line1 0 s s 1 2
-[ "$LINE1_W" -gt "$MAX_W" ] && build_line1 0 s s 1 1
-[ "$LINE1_W" -gt "$MAX_W" ] && build_line1 0 0 s 1 1
-[ "$LINE1_W" -gt "$MAX_W" ] && build_line1 0 0 s 0 1
-[ "$LINE1_W" -gt "$MAX_W" ] && build_line1 0 0 0 0 1
-[ "$LINE1_W" -gt "$MAX_W" ] && build_line1 0 0 0 0 0
-
-if [ "$CFG_PRESET" = "minimal" ]; then
-  printf '%s\n' "${PAD}${LINE1}"
-  exit 0
-fi
-
-# ─── Line 2: Quota (Collapsed when empty, degrades cleanly on narrow terminals)
-build_line2() {
-  local style="$1" include_3p="$2" _qgem="" _qgem_w=0 _q3p="" _q3p_w=0
-  format_quota_pair _qgem _qgem_w "Gemini" \
-    "$GEMINI_5H_TENTHS" "$GEMINI_5H_AMT" "$GEMINI_5H_RESET" \
-    "$GEMINI_WEEKLY_TENTHS" "$GEMINI_WEEKLY_AMT" "$GEMINI_WEEKLY_RESET" \
-    "$style"
-  if [ "$include_3p" -eq 1 ]; then
-    format_quota_pair _q3p _q3p_w "3P" \
-      "$THIRD_PARTY_5H_TENTHS" "$THIRD_PARTY_5H_AMT" "$THIRD_PARTY_5H_RESET" \
-      "$THIRD_PARTY_WEEKLY_TENTHS" "$THIRD_PARTY_WEEKLY_AMT" "$THIRD_PARTY_WEEKLY_RESET" \
-      "$style"
-  fi
-  join_parts QUOTA_FMT QUOTA_W "$_qgem" "$_qgem_w" "$_q3p" "$_q3p_w"
-}
-
-QUOTA_FMT="" QUOTA_W=0
-if [ "$CFG_SHOW_QUOTA" -eq 1 ]; then
-  if [ "$SHOW_BARS" -eq 1 ]; then
-    build_line2 2 "$CFG_SHOW_3P_QUOTA"
-    [ "$QUOTA_W" -gt "$MAX_W" ] && build_line2 1 "$CFG_SHOW_3P_QUOTA"
-  else
-    build_line2 1 "$CFG_SHOW_3P_QUOTA"
-  fi
-  [ "$QUOTA_W" -gt "$MAX_W" ] && build_line2 0 "$CFG_SHOW_3P_QUOTA"
-  if [ "$QUOTA_W" -gt "$MAX_W" ] && [ "$CFG_SHOW_3P_QUOTA" -eq 1 ]; then
-    build_line2 0 0
+    partGit+="$R"
   fi
 fi
 
-# ─── Line 3: Counts, Sandbox, Tokens, Cache, Duration, Cost ──────────────────
-SESSION_CACHE_PCT="--"
-SESSION_FIRST_TS="0"
-DISP_IN="$TOK_IN" DISP_OUT="$TOK_OUT"
-if [ "$CFG_SHOW_TOKENS" -eq 1 ] || [ "$CFG_SHOW_CACHE" -eq 1 ] || [ "$CFG_SHOW_DURATION" -eq 1 ]; then
-  load_session_tokens
-fi
+partGeminiQuota="" part3pQuota=""
+format_quota_pair partGeminiQuota Gemini "$GEMINI_5H_TENTHS" "$GEMINI_5H_AMT" "$GEMINI_5H_RESET" \
+  "$GEMINI_WEEKLY_TENTHS" "$GEMINI_WEEKLY_AMT" "$GEMINI_WEEKLY_RESET"
+format_quota_pair part3pQuota 3P "$THIRD_PARTY_5H_TENTHS" "$THIRD_PARTY_5H_AMT" "$THIRD_PARTY_5H_RESET" \
+  "$THIRD_PARTY_WEEKLY_TENTHS" "$THIRD_PARTY_WEEKLY_AMT" "$THIRD_PARTY_WEEKLY_RESET"
 
-if [ "$SESSION_CACHE_PCT" = "--" ] && [ "$CUR_CACHE_PCT" != "--" ]; then
-  SESSION_CACHE_PCT="$CUR_CACHE_PCT"
-fi
+partArtifacts="" partSubagents="" partTasks="" partSandbox="" partTitle=""
+[ -z "$ARTIFACTS" ] || fmt_metric partArtifacts artifacts "$ARTIFACTS"
+[ -z "$SUBAGENT_TOTAL" ] || fmt_metric partSubagents subagents "$SUBAGENT_RUNNING/$SUBAGENT_TOTAL"
+[ -z "$BG_TASKS" ] || fmt_metric partTasks tasks "$BG_TASKS"
+case "$SANDBOX" in
+  true) partSandbox="${FG_GRAY}sandbox ${FG_BRIGHT_GREEN}${B}ON${R}" ;;
+  false) partSandbox="${FG_GRAY}sandbox OFF${R}" ;;
+esac
+[ -z "$TITLE_FMT" ] || partTitle="${FG_GRAY}▸ ${FG_WHITE}${TITLE_FMT}${R}"
 
-TOK_TOTAL=$(( DISP_IN + DISP_OUT ))
-
-ART_FMT="" ART_W=0
-SUB_FMT="" SUB_W=0 SUB_RUN_FMT="" SUB_RUN_W=0
-BG_FMT="" BG_W=0
-SB_FMT="" SB_W=0 SB_ON_FMT="" SB_ON_W=0
-
-if [ "$CFG_SHOW_ACTIVITY" -eq 1 ]; then
-  if [ "$ARTIFACTS" -gt 0 ]; then
-    fmt_metric ART_FMT ART_W "artifacts" "$ARTIFACTS"
-  fi
-  if [ "$SUBAGENT_TOTAL" -gt 0 ]; then
-    if [ "$SUBAGENT_RUNNING" -gt 0 ]; then
-      SUB_FMT="${FG_GRAY}subagents ${FG_BRIGHT_CYAN}${B}${SUBAGENT_RUNNING}${R}${FG_GRAY}/${SUBAGENT_TOTAL}${R}"
-      SUB_W=$(( 11 + ${#SUBAGENT_RUNNING} + ${#SUBAGENT_TOTAL} ))
-      SUB_RUN_FMT="$SUB_FMT"
-      SUB_RUN_W="$SUB_W"
-    else
-      SUB_FMT="${FG_GRAY}subagents 0/${SUBAGENT_TOTAL}${R}"
-      SUB_W=$(( 12 + ${#SUBAGENT_TOTAL} ))
-    fi
-  fi
-  if [ "$BG_TASKS" -gt 0 ]; then
-    fmt_metric BG_FMT BG_W "tasks" "$BG_TASKS"
+partTokens="" partCache="" partDuration="" partCost=""
+SESSION_CACHE_PCT="--" SESSION_FIRST_TS=0 DISP_IN="$TOK_IN" DISP_OUT="$TOK_OUT"
+if visible Tokens || visible Cache || visible Duration; then load_session_tokens; fi
+if [ -n "$DISP_IN$DISP_OUT" ]; then
+  fmt_tokens total "$(( DISP_IN + DISP_OUT ))"
+  fmt_metric partTokens token "$total"
+  if [ "$NARROW" -eq 0 ]; then
+    fmt_tokens input "${DISP_IN:-0}"
+    fmt_tokens output "${DISP_OUT:-0}"
+    partTokens+=" ${FG_GRAY}(${input}↑ ${output}↓)${R}"
   fi
 fi
-
-if [ "$SANDBOX" = "true" ]; then
-  SB_FMT="${FG_GRAY}sandbox ${FG_BRIGHT_GREEN}${B}ON${R}"
-  SB_W=10
-  SB_ON_FMT="$SB_FMT"
-  SB_ON_W=10
-elif [ "$CFG_SHOW_SANDBOX_OFF" -eq 1 ]; then
-  SB_FMT="${FG_GRAY}sandbox off${R}"
-  SB_W=11
+[ "$SESSION_CACHE_PCT" != "--" ] || SESSION_CACHE_PCT="$CUR_CACHE_PCT"
+[ "$SESSION_CACHE_PCT" = "--" ] || fmt_metric partCache cache "${SESSION_CACHE_PCT}%"
+if [ "$SESSION_FIRST_TS" -gt 0 ] && [ "$NOW_EPOCH" -ge "$SESSION_FIRST_TS" ]; then
+  fmt_duration partDuration "$((NOW_EPOCH - SESSION_FIRST_TS))"
+  partDuration="${FG_GRAY}${partDuration}${R}"
+fi
+if [ -n "$COST_FMT_VAL" ]; then
+  prefix='$'
+  [ "$COST_EST" != true ] || prefix='~$'
+  partCost="${FG_BRIGHT_YELLOW}${prefix}${COST_FMT_VAL}${R}"
 fi
 
-CACHE_FMT="" CACHE_W=0
-if [ "$CFG_SHOW_CACHE" -eq 1 ] && [ "$SESSION_CACHE_PCT" != "--" ]; then
-  fmt_metric CACHE_FMT CACHE_W "cache" "${SESSION_CACHE_PCT}%"
-fi
-
-DUR_FMT="" DUR_W=0
-if [ "$CFG_SHOW_DURATION" -eq 1 ] && [ "$SESSION_FIRST_TS" -gt 0 ] && [ "$NOW_EPOCH" -ge "$SESSION_FIRST_TS" ]; then
-  fmt_duration _dur_str "$((NOW_EPOCH - SESSION_FIRST_TS))"
-  if [ -n "$_dur_str" ]; then
-    DUR_FMT="${FG_GRAY}${_dur_str}${R}"
-    DUR_W=${#_dur_str}
-  fi
-fi
-
-COST_FMT="" COST_W=0
-if [ "$CFG_SHOW_COST" -eq 1 ] && [ -n "$COST_FMT_VAL" ]; then
-  _cost_prefix="\$"
-  _cost_pw=1
-  if [ "$COST_EST" = "true" ]; then
-    _cost_prefix="~\$"
-    _cost_pw=2
-  fi
-  COST_FMT="${FG_BRIGHT_YELLOW}${_cost_prefix}${COST_FMT_VAL}${R}"
-  COST_W=$(( _cost_pw + ${#COST_FMT_VAL} ))
-fi
-
-TOK_FULL_FMT="" TOK_FULL_W=0 TOK_SHORT_FMT="" TOK_SHORT_W=0
-if [ "$CFG_SHOW_TOKENS" -eq 1 ] && [ "$TOK_TOTAL" -gt 0 ]; then
-  fmt_tokens _tok_tot_str "$TOK_TOTAL"
-  fmt_metric TOK_SHORT_FMT TOK_SHORT_W "token" "$_tok_tot_str"
-  fmt_tokens _tok_in_str "$DISP_IN"
-  fmt_tokens _tok_out_str "$DISP_OUT"
-  TOK_FULL_FMT="${TOK_SHORT_FMT} ${FG_GRAY}(${_tok_in_str}↑ ${_tok_out_str}↓)${R}"
-  TOK_FULL_W=$(( TOK_SHORT_W + 6 + ${#_tok_in_str} + ${#_tok_out_str} ))
-fi
-
-LINE3="" LINE3_W=0
-join_parts LINE3 LINE3_W \
-  "$ART_FMT" "$ART_W" "$SUB_FMT" "$SUB_W" "$BG_FMT" "$BG_W" "$SB_FMT" "$SB_W" \
-  "$TOK_FULL_FMT" "$TOK_FULL_W" "$CACHE_FMT" "$CACHE_W" "$DUR_FMT" "$DUR_W" "$COST_FMT" "$COST_W"
-[ "$LINE3_W" -gt "$MAX_W" ] && join_parts LINE3 LINE3_W \
-  "$ART_FMT" "$ART_W" "$SUB_FMT" "$SUB_W" "$BG_FMT" "$BG_W" "$SB_FMT" "$SB_W" \
-  "$TOK_SHORT_FMT" "$TOK_SHORT_W" "$CACHE_FMT" "$CACHE_W" "$DUR_FMT" "$DUR_W" "$COST_FMT" "$COST_W"
-[ "$LINE3_W" -gt "$MAX_W" ] && join_parts LINE3 LINE3_W \
-  "$SUB_RUN_FMT" "$SUB_RUN_W" "$BG_FMT" "$BG_W" "$SB_ON_FMT" "$SB_ON_W" \
-  "$TOK_SHORT_FMT" "$TOK_SHORT_W" "$CACHE_FMT" "$CACHE_W" "$DUR_FMT" "$DUR_W" "$COST_FMT" "$COST_W"
-[ "$LINE3_W" -gt "$MAX_W" ] && join_parts LINE3 LINE3_W \
-  "$SUB_RUN_FMT" "$SUB_RUN_W" "$BG_FMT" "$BG_W" "$SB_ON_FMT" "$SB_ON_W" \
-  "$TOK_SHORT_FMT" "$TOK_SHORT_W" "$CACHE_FMT" "$CACHE_W" "$COST_FMT" "$COST_W"
-[ "$LINE3_W" -gt "$MAX_W" ] && join_parts LINE3 LINE3_W \
-  "$SUB_RUN_FMT" "$SUB_RUN_W" "$SB_ON_FMT" "$SB_ON_W" \
-  "$TOK_SHORT_FMT" "$TOK_SHORT_W" "$COST_FMT" "$COST_W"
-[ "$LINE3_W" -gt "$MAX_W" ] && join_parts LINE3 LINE3_W \
-  "$TOK_SHORT_FMT" "$TOK_SHORT_W" "$COST_FMT" "$COST_W"
-
-# ─── Output ──────────────────────────────────────────────────────────────────
-if [ "$CFG_SHOW_TITLE" -eq 1 ] && [ -n "$TITLE_FMT" ]; then
-  printf '%s\n' "${PAD}${FG_GRAY}▸ ${FG_WHITE}${TITLE_FMT}${R}"
-fi
-printf '%s\n' "${PAD}${LINE1}"
-if [ -n "$QUOTA_FMT" ]; then
-  printf '%s\n' "${PAD}${QUOTA_FMT}"
-fi
-if [ -n "$LINE3" ]; then
-  printf '%s\n' "${PAD}${LINE3}"
-fi
+print_row "${row1[@]}"
+print_row "${row2[@]}"
+print_row "${row3[@]}"
