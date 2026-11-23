@@ -337,13 +337,23 @@ git_cache_key() {
   printf -v "$_out" '%s' "$key"
 }
 
-run_git_status() {
+run_git() {
   local cwd="$1"
+  shift
   if [ -n "$TIMEOUT_BIN" ]; then
-    "$TIMEOUT_BIN" 2 git -C "$cwd" --no-optional-locks status --porcelain=v2 --branch 2>/dev/null || true
+    "$TIMEOUT_BIN" 2 git -C "$cwd" --no-optional-locks "$@" 2>/dev/null || true
   else
-    git -C "$cwd" --no-optional-locks status --porcelain=v2 --branch 2>/dev/null || true
+    git -C "$cwd" --no-optional-locks "$@" 2>/dev/null || true
   fi
+}
+
+run_git_diff_numstat() {
+  local cwd="$1" oid="$2" base="HEAD"
+  if [ -z "$oid" ] || [ "$oid" = "(initial)" ]; then
+    base=$(run_git "$cwd" hash-object -t tree /dev/null)
+    [ -n "$base" ] || return 0
+  fi
+  run_git "$cwd" -c diff.relative=false diff "$base" --numstat
 }
 
 parse_git_status() {
@@ -354,23 +364,29 @@ parse_git_status() {
   has_git_dir "$cwd" || return 0
 
   local gkey="" gdir="${CACHE_ROOT}/git" gfile=""
-  local c_ts="" c_dirty="" c_a="" c_b="" c_m="" c_add="" c_d="" c_u="" c_branch=""
+  local c_ver="" c_ts="" c_dirty="" c_a="" c_b="" c_flags="" c_ins="" c_del="" c_branch=""
   git_cache_key gkey "$cwd"
   gfile="${gdir}/${gkey}.cache"
 
   if [ -r "$gfile" ]; then
-    IFS=$'\t' read -r c_ts c_dirty c_a c_b c_m c_add c_d c_u c_branch < "$gfile" || true
-    if is_uints "$c_ts" "$c_a" "$c_b" "$c_m" "$c_add" "$c_d" "$c_u" \
+    IFS=$'\t' read -r c_ver c_ts c_dirty c_a c_b c_flags c_ins c_del c_branch < "$gfile" || true
+    if [ "$c_ver" = "v2" ] \
+      && is_uints "$c_ts" "$c_a" "$c_b" "$c_ins" "$c_del" \
+      && [[ "$c_flags" =~ ^(-|[csmdrut]+)$ ]] \
       && [ $((NOW_EPOCH - c_ts)) -ge 0 ] && [ $((NOW_EPOCH - c_ts)) -le 2 ]; then
       if [ -z "$VCS_BRANCH" ]; then VCS_BRANCH="$c_branch"; fi
       if [ "$c_dirty" = "true" ]; then VCS_DIRTY="true"; fi
       GIT_AHEAD="$c_a" GIT_BEHIND="$c_b"
-      GIT_MOD="$c_m" GIT_ADD="$c_add" GIT_DEL="$c_d" GIT_UNTRACKED="$c_u"
+      GIT_FLAGS=""
+      [ "$c_flags" = "-" ] || GIT_FLAGS="$c_flags"
+      GIT_INS="$c_ins" GIT_DEL_LINES="$c_del"
       return 0
     fi
   fi
 
-  local _line _oid="" _head="" _ab _a _b _xy g_branch="" g_dirty="false"
+  local _line _oid="" _head="" _ab="" _a="" _b="" _x="" _y="" _stash=""
+  local g_branch="" g_dirty="false" g_has_tracked=0
+  local g_c=0 g_s=0 g_m=0 g_d=0 g_r=0 g_u=0 g_t=0
   while IFS= read -r _line; do
     case "$_line" in
       "# branch.oid "*)
@@ -394,27 +410,56 @@ parse_git_status() {
         GIT_AHEAD="${_a#+}"
         GIT_BEHIND="${_b#-}"
         ;;
-      "1 "*|"2 "*)
-        g_dirty="true"
-        _xy="${_line:2:2}"
-        if [[ "$_xy" == *D* ]]; then
-          GIT_DEL=$((GIT_DEL + 1))
-        elif [[ "$_xy" == *A* ]]; then
-          GIT_ADD=$((GIT_ADD + 1))
-        else
-          GIT_MOD=$((GIT_MOD + 1))
-        fi
+      "# stash "*)
+        _stash="${_line#\# stash }"
+        if is_uints "$_stash" && [ "$_stash" -gt 0 ]; then g_t=1; fi
+        ;;
+      "1 "*)
+        g_has_tracked=1
+        _x="${_line:2:1}"
+        _y="${_line:3:1}"
+        case "$_x" in
+          A|M|T) g_s=1 ;;
+          D)     g_d=1 ;;
+        esac
+        case "$_y" in
+          A|M|T) g_m=1 ;;
+          D)     g_d=1 ;;
+        esac
+        ;;
+      "2 "*)
+        g_has_tracked=1
+        _x="${_line:2:1}"
+        _y="${_line:3:1}"
+        case "$_x" in
+          R) g_r=1 ;;
+          C) g_s=1 ;;
+        esac
+        case "$_y" in
+          M|T) g_m=1 ;;
+          D)   g_d=1 ;;
+        esac
         ;;
       "u "*)
-        g_dirty="true"
-        GIT_MOD=$((GIT_MOD + 1))
+        g_has_tracked=1
+        g_c=1
         ;;
       "? "*)
-        g_dirty="true"
-        GIT_UNTRACKED=$((GIT_UNTRACKED + 1))
+        g_u=1
         ;;
     esac
-  done < <(run_git_status "$cwd")
+  done < <(run_git "$cwd" status --porcelain=v2 --branch --show-stash)
+
+  if (( g_has_tracked || g_u )); then g_dirty="true"; fi
+  if [ "$g_has_tracked" -eq 1 ]; then
+    local _ins="" _del="" _rest=""
+    while IFS=$'\t' read -r _ins _del _rest; do
+      if is_uints "$_ins" "$_del"; then
+        GIT_INS=$((GIT_INS + _ins))
+        GIT_DEL_LINES=$((GIT_DEL_LINES + _del))
+      fi
+    done < <(run_git_diff_numstat "$cwd" "$_oid")
+  fi
 
   if [[ "$g_branch" == *$'\033'* ]] || [[ "$g_branch" =~ [[:cntrl:]] ]]; then
     g_branch=$(jq -nr --arg s "$g_branch" "${JQ_TEXT_LIB}"'$s | clean_str' 2>/dev/null || printf '%s' "$g_branch" | tr -d '\000-\037\177')
@@ -422,13 +467,21 @@ parse_git_status() {
 
   is_uints "$GIT_AHEAD" || GIT_AHEAD=0
   is_uints "$GIT_BEHIND" || GIT_BEHIND=0
+  GIT_FLAGS=""
+  [ "$g_c" -eq 0 ] || GIT_FLAGS+="c"
+  [ "$g_s" -eq 0 ] || GIT_FLAGS+="s"
+  [ "$g_m" -eq 0 ] || GIT_FLAGS+="m"
+  [ "$g_d" -eq 0 ] || GIT_FLAGS+="d"
+  [ "$g_r" -eq 0 ] || GIT_FLAGS+="r"
+  [ "$g_u" -eq 0 ] || GIT_FLAGS+="u"
+  [ "$g_t" -eq 0 ] || GIT_FLAGS+="t"
   if [ -z "$VCS_BRANCH" ]; then VCS_BRANCH="$g_branch"; fi
   if [ "$g_dirty" = "true" ]; then VCS_DIRTY="true"; fi
 
-  local _cache_row=""
-  printf -v _cache_row '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+  local _cache_row="" _c_flags="${GIT_FLAGS:--}"
+  printf -v _cache_row 'v2\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
     "$NOW_EPOCH" "$g_dirty" "$GIT_AHEAD" "$GIT_BEHIND" \
-    "$GIT_MOD" "$GIT_ADD" "$GIT_DEL" "$GIT_UNTRACKED" "$g_branch"
+    "$_c_flags" "$GIT_INS" "$GIT_DEL_LINES" "$g_branch"
   write_cache_file "$gdir" "$gfile" "$_cache_row"
 }
 
@@ -574,19 +627,34 @@ partModel="" partContext="" partPath="" partGit=""
 usage_bar partContext "$USED_TENTHS"
 partContext="${FG_GRAY}ctx ${partContext}"
 
-GIT_AHEAD=0 GIT_BEHIND=0 GIT_MOD=0 GIT_ADD=0 GIT_DEL=0 GIT_UNTRACKED=0
+GIT_AHEAD=0 GIT_BEHIND=0 GIT_FLAGS="" GIT_INS=0 GIT_DEL_LINES=0
 if visible Git; then
   if [ -n "$CWD" ] && command -v git >/dev/null 2>&1; then parse_git_status "$CWD"; fi
   if [ -n "$VCS_BRANCH" ]; then
-    if [ "$VCS_DIRTY" = true ]; then partGit="${FG_BRIGHT_RED}${VCS_BRANCH}${FG_BRIGHT_YELLOW}*"
+    if [ "$VCS_DIRTY" = true ]; then partGit="${FG_BRIGHT_RED}${VCS_BRANCH}"
     else partGit="${FG_BRIGHT_BLUE}${VCS_BRANCH}"; fi
     if [ "$NARROW" -eq 0 ]; then
-      for ind in "$GIT_AHEAD:${FG_BRIGHT_CYAN}↑" "$GIT_BEHIND:${FG_BRIGHT_CYAN}↓" \
-        "$GIT_MOD:${FG_BRIGHT_YELLOW}!" "$GIT_ADD:${FG_BRIGHT_GREEN}+" \
-        "$GIT_DEL:${FG_BRIGHT_RED}✘" "$GIT_UNTRACKED:${FG_GRAY}?"; do
-        count=${ind%%:*}
-        [ "$count" -eq 0 ] || partGit+=" ${ind#*:}${count}"
-      done
+      _git_status=""
+      [[ "$GIT_FLAGS" != *c* ]] || _git_status+="${FG_BRIGHT_RED}="
+      [[ "$GIT_FLAGS" != *s* ]] || _git_status+="${FG_BRIGHT_GREEN}+"
+      [[ "$GIT_FLAGS" != *m* ]] || _git_status+="${FG_BRIGHT_YELLOW}!"
+      [[ "$GIT_FLAGS" != *d* ]] || _git_status+="${FG_BRIGHT_RED}✘"
+      [[ "$GIT_FLAGS" != *r* ]] || _git_status+="${FG_BRIGHT_MAGENTA}»"
+      [[ "$GIT_FLAGS" != *u* ]] || _git_status+="${FG_GRAY}?"
+      [[ "$GIT_FLAGS" != *t* ]] || _git_status+="${FG_BRIGHT_CYAN}\$"
+      [ "$GIT_AHEAD" -eq 0 ] || _git_status+="${FG_BRIGHT_CYAN}↑${GIT_AHEAD}"
+      [ "$GIT_BEHIND" -eq 0 ] || _git_status+="${FG_BRIGHT_CYAN}↓${GIT_BEHIND}"
+      if [ -n "$_git_status" ]; then
+        partGit+=" ${FG_GRAY}[${_git_status}${FG_GRAY}]"
+      elif [ "$VCS_DIRTY" = true ]; then
+        partGit+="${FG_BRIGHT_YELLOW}*"
+      fi
+      _git_diff=""
+      [ "$GIT_INS" -eq 0 ] || _git_diff+="${FG_BRIGHT_GREEN}+${GIT_INS}"
+      [ "$GIT_DEL_LINES" -eq 0 ] || _git_diff+="${_git_diff:+ }${FG_BRIGHT_RED}−${GIT_DEL_LINES}"
+      [ -z "$_git_diff" ] || partGit+=" ${FG_GRAY}(${_git_diff}${FG_GRAY})"
+    elif [ "$VCS_DIRTY" = true ]; then
+      partGit+="${FG_BRIGHT_YELLOW}*"
     fi
     partGit+="$R"
   fi

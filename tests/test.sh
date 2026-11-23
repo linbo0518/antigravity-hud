@@ -190,31 +190,114 @@ assert_eq "only the status row remains" "$(strip_ansi "$OUT")" '  ● READY'
 OUT=$(XDG_CONFIG_HOME="$CFG_CUSTOM" "$STATUSLINE" <<< '{"cwd":"/tmp","model":{"id":"hidden"},"conversation_title":"Only title","terminal_width":80}')
 assert_eq "ordinary switches inherited without extra separators" "$(strip_ansi "$OUT")" $'  ● READY\n  ▸ Only title'
 
-# Real git repository status parsing (wide counts, narrow branch-only, detached HEAD)
+# Real git repository status parsing (flags, diff lines, unborn/detached, narrow, cache v2)
 if command -v git >/dev/null 2>&1; then
+  render_git() {
+    local out
+    out=$(XDG_CACHE_HOME="$3" "$STATUSLINE" <<< "{\"cwd\":\"$1\",\"terminal_width\":$2}") || return
+    strip_ansi "$out"
+  }
+
   GIT_REPO="${TMP_DIR}/git-repo"
   mkdir -p "$GIT_REPO"
   git -C "$GIT_REPO" init -q -b main
   git -C "$GIT_REPO" config user.email "test@example.com"
   git -C "$GIT_REPO" config user.name "Test"
-  printf 'a\n' > "$GIT_REPO/a.txt"
-  printf 'b\n' > "$GIT_REPO/b.txt"
-  git -C "$GIT_REPO" add a.txt b.txt && git -C "$GIT_REPO" commit -q -m "init"
-  printf 'a2\n' > "$GIT_REPO/a.txt"
-  rm "$GIT_REPO/b.txt"
-  printf 'c\n' > "$GIT_REPO/c.txt"
+
+  # Unborn branch (before first commit): staged and staged+modified line stats
+  printf '1\n2\n3\n' > "$GIT_REPO/a.txt"
+  git -C "$GIT_REPO" add a.txt
+  PLAIN=$(render_git "$GIT_REPO" 120 "${TMP_DIR}/git-cache-unborn1")
+  assert_contains "git unborn staged" "$PLAIN" "main [+] (+3)"
+  printf '1\n2x\n3\n4\n' > "$GIT_REPO/a.txt"
+  PLAIN=$(render_git "$GIT_REPO" 120 "${TMP_DIR}/git-cache-unborn2")
+  assert_contains "git unborn staged+modified" "$PLAIN" "main [+!] (+4)"
+
+  # Clean committed repo
+  printf 'b1\nb2\n' > "$GIT_REPO/b.txt"
+  printf 'r1\n' > "$GIT_REPO/r.txt"
+  git -C "$GIT_REPO" add a.txt b.txt r.txt && git -C "$GIT_REPO" commit -q -m "init"
+  PLAIN=$(render_git "$GIT_REPO" 120 "${TMP_DIR}/git-cache-clean")
+  assert_contains "git clean branch" "$PLAIN" "│ main"
+  assert_not_contains "git clean omits brackets" "$PLAIN" "main ["
+  assert_not_contains "git clean omits star" "$PLAIN" "main*"
+
+  # Ahead & behind upstream on clean repo
+  GIT_REMOTE="${TMP_DIR}/git-remote.git"
+  GIT_OTHER="${TMP_DIR}/git-other"
+  git init -q --bare -b main "$GIT_REMOTE"
+  git -C "$GIT_REPO" remote add origin "$GIT_REMOTE"
+  git -C "$GIT_REPO" push -q -u origin main
+  git clone -q "$GIT_REMOTE" "$GIT_OTHER"
+  git -C "$GIT_OTHER" config user.email "test@example.com"
+  git -C "$GIT_OTHER" config user.name "Test"
+  printf 'remote\n' > "$GIT_OTHER/remote.txt"
+  git -C "$GIT_OTHER" add remote.txt && git -C "$GIT_OTHER" commit -q -m "remote" && git -C "$GIT_OTHER" push -q
+  git -C "$GIT_REPO" fetch -q
+  printf 'local\n' > "$GIT_REPO/local.txt"
+  git -C "$GIT_REPO" add local.txt && git -C "$GIT_REPO" commit -q -m "local"
+  PLAIN=$(render_git "$GIT_REPO" 120 "${TMP_DIR}/git-cache-ab")
+  assert_contains "git clean ahead/behind" "$PLAIN" "main [↑1↓1]"
+  PLAIN=$(render_git "$GIT_REPO" 80 "${TMP_DIR}/git-cache-ab")
+  assert_not_contains "git clean narrow omits star" "$PLAIN" "main*"
+
+  # Full flags (+, !, ✘, », ?, $, ↑, ↓), binary ignored in numstat, untracked excluded from diff
+  printf 'stash\n' >> "$GIT_REPO/a.txt"
+  git -C "$GIT_REPO" stash push -q -m "s1"
+  printf 'c1\nc2\n' > "$GIT_REPO/c.txt"
   git -C "$GIT_REPO" add c.txt
-  printf 'u\n' > "$GIT_REPO/u.txt"
-  OUT=$(XDG_CACHE_HOME="${TMP_DIR}/git-cache" "$STATUSLINE" <<< "{\"cwd\":\"${GIT_REPO}\",\"terminal_width\":120}")
-  assert_contains "git wide shows dirty counts" "$(strip_ansi "$OUT")" "main* !1 +1 ✘1 ?1"
-  OUT=$(XDG_CACHE_HOME="${TMP_DIR}/git-cache" "$STATUSLINE" <<< "{\"cwd\":\"${GIT_REPO}\",\"terminal_width\":80}")
-  PLAIN=$(strip_ansi "$OUT")
+  printf '\000\001\002' > "$GIT_REPO/bin.dat"
+  git -C "$GIT_REPO" add bin.dat
+  printf '1\n20\n3\n4\n' > "$GIT_REPO/a.txt"
+  rm "$GIT_REPO/b.txt"
+  git -C "$GIT_REPO" mv r.txt r2.txt
+  printf 'u1\nu2\nu3\n' > "$GIT_REPO/u.txt"
+  GIT_CACHE_FULL="${TMP_DIR}/git-cache-full"
+  PLAIN=$(render_git "$GIT_REPO" 120 "$GIT_CACHE_FULL")
+  assert_contains "git wide shows compact flags and diff lines" "$PLAIN" "main [+!✘»?$↑1↓1] (+3 −3)"
+  PLAIN=$(render_git "$GIT_REPO" 120 "$GIT_CACHE_FULL")
+  assert_contains "git cache v2 hit preserves flags and diff lines" "$PLAIN" "main [+!✘»?$↑1↓1] (+3 −3)"
+  for f in "${GIT_CACHE_FULL}/statusline-hud/git"/*.cache; do
+    printf '%s\ttrue\t9\t9\t1\t1\t1\t1\told\n' "$(date +%s)" > "$f"
+  done
+  PLAIN=$(render_git "$GIT_REPO" 120 "$GIT_CACHE_FULL")
+  assert_contains "git legacy cache invalidated and refreshed" "$PLAIN" "main [+!✘»?$↑1↓1] (+3 −3)"
+
+  PLAIN=$(render_git "$GIT_REPO" 80 "$GIT_CACHE_FULL")
   assert_contains "git narrow shows dirty branch" "$PLAIN" "main*"
-  assert_not_contains "git narrow omits counts" "$PLAIN" "!1"
+  assert_not_contains "git narrow omits flags" "$PLAIN" "[+!"
+  assert_not_contains "git narrow omits diff lines" "$PLAIN" "(+3"
+
   git -C "$GIT_REPO" checkout -q --detach HEAD
   DETACH_SHA=$(git -C "$GIT_REPO" rev-parse --short=7 HEAD)
-  OUT=$(XDG_CACHE_HOME="${TMP_DIR}/git-cache-detach" "$STATUSLINE" <<< "{\"cwd\":\"${GIT_REPO}\",\"terminal_width\":120}")
-  assert_contains "git detached HEAD uses short sha" "$(strip_ansi "$OUT")" "${DETACH_SHA}* !1 +1 ✘1 ?1"
+  PLAIN=$(render_git "$GIT_REPO" 120 "${TMP_DIR}/git-cache-detach")
+  assert_contains "git detached HEAD uses short sha" "$PLAIN" "${DETACH_SHA} [+!✘»?$] (+3 −3)"
+
+  # Single-sided deletion and merge conflict (=)
+  GIT_CONF="${TMP_DIR}/git-conf"
+  mkdir -p "$GIT_CONF"
+  git -C "$GIT_CONF" init -q -b main
+  git -C "$GIT_CONF" config user.email "test@example.com"
+  git -C "$GIT_CONF" config user.name "Test"
+  printf 'l1\nl2\n' > "$GIT_CONF/f.txt"
+  git -C "$GIT_CONF" add f.txt && git -C "$GIT_CONF" commit -q -m "base"
+  rm "$GIT_CONF/f.txt"
+  PLAIN=$(render_git "$GIT_CONF" 120 "${TMP_DIR}/git-cache-del")
+  assert_contains "git deletion-only diff omits plus" "$PLAIN" "main [✘] (−2)"
+  git -C "$GIT_CONF" checkout -q -- f.txt
+  git -C "$GIT_CONF" checkout -q -b other
+  printf 'other\nl2\n' > "$GIT_CONF/f.txt"
+  git -C "$GIT_CONF" commit -q -am "other"
+  git -C "$GIT_CONF" checkout -q main
+  printf 'ours\nl2\n' > "$GIT_CONF/f.txt"
+  git -C "$GIT_CONF" commit -q -am "ours"
+  git -C "$GIT_CONF" merge --no-edit other >/dev/null 2>&1 || true
+  PLAIN=$(render_git "$GIT_CONF" 120 "${TMP_DIR}/git-cache-conf")
+  assert_contains "git merge conflict shows =" "$PLAIN" "main [=]"
+
+  # Synthetic JSON dirty fallback without local git repo keeps star on wide screen
+  OUT=$("$STATUSLINE" <<< '{"cwd":"/tmp","vcs":{"type":"git","branch":"main","dirty":true},"terminal_width":120}')
+  assert_contains "synthetic dirty fallback keeps star" "$(strip_ansi "$OUT")" "main*"
 fi
 
 # Broken config.json gracefully falls back to defaults without failing
