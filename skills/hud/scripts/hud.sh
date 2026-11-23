@@ -113,7 +113,7 @@ print_effective_config() {
 }
 
 cmd_doctor() {
-  local has_jq=0 script_path="" script_tilde="" issues=0 activation="HUD not enabled yet"
+  local has_jq=0 script_path="" script_tilde="" issues=0 activation=""
 
   printf '=== Environment ===\n'
   printf '  bash:     %s\n' "${BASH_VERSION:-unknown}"
@@ -259,12 +259,10 @@ cmd_doctor() {
   fi
 
   printf '\n=== Summary ===\n'
-  if [ "$issues" -eq 0 ]; then
-    printf '  health:   Environment ready; %s\n' "$activation"
-  else
-    printf '  health:   %d issue(s) found; %s\n' "$issues" "$activation"
-  fi
-  if [ "$activation" = "HUD not enabled yet" ] && [ "$has_jq" -eq 1 ] && [ -n "$script_path" ] && [ -x "$script_path" ]; then
+  local health="Environment ready"
+  [ "$issues" -eq 0 ] || health="${issues} issue(s) found"
+  printf '  health:   %s; %s\n' "$health" "${activation:-HUD not enabled yet}"
+  if [ -z "$activation" ] && [ "$has_jq" -eq 1 ] && [ -n "$script_path" ] && [ -x "$script_path" ]; then
     printf '  activate: /statusline %s\n' "$script_tilde"
   fi
 }
