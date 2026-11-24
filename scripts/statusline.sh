@@ -187,8 +187,7 @@ done < <(
         then ([.subagents[] | select(type == "object" and .status == "running")] | length) else 0 end))
     + kv("SUBAGENT_TOTAL"; (if (.subagents | type) == "array" then (.subagents | length) else 0 end))
     + kv("BG_TASKS"; (.task_count? | clean_uint))
-    + kv("MODEL"; ((.model?.display_name? // .model?.id? // "") | clean_str |
-        if $narrow then sub(" \\([^()]+\\)$"; "") else . end))
+    + kv("MODEL"; ((.model?.display_name? // .model?.id? // "") | clean_str))
     + kv("TITLE_FMT"; (.conversation_title? | clean_title))
     + kv("CONV_ID"; ((.conversation_id? // .session_id? // "") | clean_str))
     + kv("TRANSCRIPT_PATH"; (.transcript_path? | clean_str))

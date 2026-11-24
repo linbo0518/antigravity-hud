@@ -142,9 +142,9 @@ PLAIN=$(strip_ansi "$OUT")
 assert_eq "omitted wide defaults" "$PLAIN" $'  ● READY │ ctx ░░░░░░░░░░ 0.0% │ /tmp\n  artifacts 0 │ subagents 0/0 │ tasks 0 │ sandbox OFF │ token 0 (0↑ 0↓) │ 0m'
 
 # A very narrow pane keeps the selected components even when they overflow.
-OUT=$("$STATUSLINE" <<< '{"cwd":"/项目/很长的项目名","conversation_title":"✨ 修复标题","task_count":1,"terminal_width":20,"model":{"display_name":"Gemini 4 Neon (XHigh)"},"vcs":{"branch":"feature/很长的分支名"}}')
+OUT=$("$STATUSLINE" <<< '{"cwd":"/项目/很长的项目名","conversation_title":"✨ 修复标题","task_count":1,"terminal_width":20,"model":{"id":"gemini-4-neon","display_name":"Gemini 4 Neon (XHigh)"},"vcs":{"branch":"feature/很长的分支名"}}')
 PLAIN=$(strip_ansi "$OUT")
-assert_eq "no pruning, no separate title row" "$PLAIN" $'  ● READY │ Gemini 4 Neon │ ctx 0.0% │ …/很长的项目名 │ feature/很长的分支名\n  artifacts 0 │ subagents 0/0 │ tasks 1 │ sandbox OFF │ token 0 │ 0m │ ▸ ✨ 修复标题'
+assert_eq "no pruning, no separate title row" "$PLAIN" $'  ● READY │ Gemini 4 Neon (XHigh) │ ctx 0.0% │ …/很长的项目名 │ feature/很长的分支名\n  artifacts 0 │ subagents 0/0 │ tasks 1 │ sandbox OFF │ token 0 │ 0m │ ▸ ✨ 修复标题'
 
 # LC_ALL=C locale safety (no broken UTF-8 bar bytes, still shows bar on wide screen)
 OUT=$(LC_ALL=C "$STATUSLINE" <<< '{
