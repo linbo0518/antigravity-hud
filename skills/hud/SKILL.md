@@ -38,12 +38,12 @@ Location: `${XDG_CONFIG_HOME:-~/.config}/statusline-hud/config.json` (hot-reload
 | --- | --- | --- |
 | 1 | `showMode`, `showModel`, `showContext`, `showPath`, `showGit` | Core status (`● READY`, `⚙ WORKING`, `⚠ CONFIRM (+N)`, etc.) always starts row 1; `showMode` covers `PLAN`/`EDITS`/`AUTO` + Vim `[N]`/`[I]`/`[V]`/`[VL]` |
 | 2 | `showGeminiQuota`, `show3pQuota` | Gemini and third-party 5h / weekly quota buckets |
-| 3 | `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showCache`, `showDuration`, `showCost`, `showTitle` | `showSubagents` shows `running/total`; `showDuration` shows elapsed time from transcript; `showTitle` appends `▸ <title>` |
+| 3 | `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showTokenSpeed`, `showCache`, `showDuration`, `showCost`, `showTitle` | `showSubagents` shows `running/total`; `showTokenSpeed` shows `<N> tok/s` for the current turn from transcript; `showDuration` shows elapsed time from transcript; `showTitle` appends `▸ <title>` |
 
 - All switches are booleans defaulting to `true`.
-- Enabled count and state items (`showContext`, `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showDuration`) show `0`, `0.0%`, `0m`, or `OFF` even when omitted by the CLI; disabled items, items with no value (such as an untitled session, non-Git path, or unreported quota/cache/cost), and empty rows are omitted.
+- Enabled count and state items (`showContext`, `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showTokenSpeed`, `showDuration`) show `0`, `0.0%`, `0 tok/s`, `0m`, or `OFF` even when omitted by the CLI; disabled items, items with no value (such as an untitled session, non-Git path, or unreported quota/cache/cost), and empty rows are omitted.
 - Below 100 columns (`terminal_width < 100`), explicit `narrow` booleans override ordinary switches; missing keys inherit. Short forms (no progress bars or reset times, `wk`, 1-level path, branch without git details, token total only) save space without dropping selected items. The full model name (`model.display_name`, falling back to `model.id`) is preserved at every width. Long rows may wrap.
-- **Symbols**: Git `[...]` status flags (`=` conflicted, `+` staged, `!` modified, `✘` deleted, `»` renamed, `?` untracked, `$` stashed, `↑N`/`↓N` ahead/behind) + `(+N −M)` tracked diff lines (`*` on narrow panes); Quota shows used % (green `<60%`, yellow `60–89%`, red `>=90%`) or `<N> left`; Tokens show `<total> (<in>↑ <out>↓)`.
+- **Symbols**: Git `[...]` status flags (`=` conflicted, `+` staged, `!` modified, `✘` deleted, `»` renamed, `?` untracked, `$` stashed, `↑N`/`↓N` ahead/behind) + `(+N −M)` tracked diff lines (`*` on narrow panes); Quota shows used % (green `<60%`, yellow `60–89%`, red `>=90%`) or `<N> left`; Tokens show `tok <total> (<in>↑ <out>↓)` followed by `<N> tok/s`.
 
 ## Workflow
 
@@ -89,7 +89,7 @@ Note: In sandboxed modes (including default `Auto` on `agy >= 1.5.10` and `--san
 If `doctor` warns about removed keys from v0.1.x (`preset`, `showQuota`, `showActivity`, `showSandboxOff`), explain the v0.2.0 equivalents and offer to migrate (note: `set` preserves unknown keys and `unset` only accepts current keys, so migrating cleanly means `reset` followed by `set ...`, or manually deleting the legacy keys from `config.json`):
 - `showQuota: false` → `showGeminiQuota=false show3pQuota=false`
 - `showActivity: false` → `showArtifacts=false showSubagents=false showTasks=false`
-- `preset: "minimal"` → disable row 2 and row 3 switches (`showGeminiQuota=false show3pQuota=false showArtifacts=false showSubagents=false showTasks=false showSandbox=false showTokens=false showCache=false showDuration=false showCost=false showTitle=false`)
+- `preset: "minimal"` → disable row 2 and row 3 switches (`showGeminiQuota=false show3pQuota=false showArtifacts=false showSubagents=false showTasks=false showSandbox=false showTokens=false showTokenSpeed=false showCache=false showDuration=false showCost=false showTitle=false`)
 - `preset: "compact"` → no separate wide no-bars preset in v0.2.0; compact forms apply automatically below 100 columns
 - `showSandboxOff: false` → `OFF` is shown whenever `showSandbox` is on; set `showSandbox=false` (or `narrow.showSandbox=false`) to hide it
 

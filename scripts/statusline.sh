@@ -81,7 +81,7 @@ JQ_TEXT_LIB='
 # ─── Parse stdin & config.json (Single jq pass, NUL-delimited KV stream) ─────
 row1=(Status Mode Model Context Path Git)
 row2=(GeminiQuota 3pQuota)
-row3=(Artifacts Subagents Tasks Sandbox Tokens Cache Duration Cost Title)
+row3=(Artifacts Subagents Tasks Sandbox Tokens TokenSpeed Cache Duration Cost Title)
 HIDDEN=" " NARROW=1
 STATE="idle" CONFIRM_PENDING="false" PENDING_INPUT="0" CYCLE_MODE="" VIM_MODE=""
 USED_TENTHS=0 CWD="" PATH_TEXT="" VCS_TYPE="" VCS_BRANCH="" VCS_DIRTY="false"
@@ -495,51 +495,64 @@ load_session_tokens() {
   [ -n "$tpath" ] || return 0
 
   local cache_dir="${CACHE_ROOT}/transcript" cache_file="" mtime="" size="" cache_hit=0
-  local c_mtime="" c_size="" s_in="" s_out="" session_pct="" first_ts="0"
+  local c_mtime="" c_size="" s_in="" s_out="" session_pct="" first_ts="0" tok_speed="0"
+  local stat_info=""
 
-  if [ "$valid_conv_id" -eq 1 ]; then
-    local stat_info=""
-    case "${OSTYPE:-}" in
-      darwin*|*bsd*) stat_info=$(stat -f '%m %z' "$tpath" 2>/dev/null) || true ;;
-      *)             stat_info=$(stat -c '%Y %s' "$tpath" 2>/dev/null) || true ;;
-    esac
-    if [[ "$stat_info" == *" "* ]]; then
-      mtime="${stat_info%% *}"
-      size="${stat_info#* }"
-    fi
-    if is_uints "$mtime" "$size"; then
-      cache_file="${cache_dir}/${CONV_ID}.cache"
-      if [ -r "$cache_file" ]; then
-        read -r c_mtime c_size s_in s_out session_pct first_ts < "$cache_file" || true
-        if [ "$c_mtime" = "$mtime" ] && [ "$c_size" = "$size" ] \
-          && is_uints "$first_ts" && { is_uints "$s_in" "$s_out" || [ "$s_in:$s_out" = '--:--' ]; } \
-          && [[ "$session_pct" =~ ^(--|[0-9]+\.[0-9])$ ]]; then
-          cache_hit=1
-        fi
+  case "${OSTYPE:-}" in
+    darwin*|*bsd*) stat_info=$(stat -f '%m %z' "$tpath" 2>/dev/null) || true ;;
+    *)             stat_info=$(stat -c '%Y %s' "$tpath" 2>/dev/null) || true ;;
+  esac
+  if [[ "$stat_info" == *" "* ]]; then
+    mtime="${stat_info%% *}"
+    size="${stat_info#* }"
+  fi
+
+  if [ "$valid_conv_id" -eq 1 ] && is_uints "$mtime" "$size"; then
+    cache_file="${cache_dir}/${CONV_ID}.cache"
+    if [ -r "$cache_file" ]; then
+      read -r c_mtime c_size s_in s_out session_pct first_ts tok_speed < "$cache_file" || true
+      if [ "$c_mtime" = "$mtime" ] && [ "$c_size" = "$size" ] \
+        && is_uints "$first_ts" "$tok_speed" && { is_uints "$s_in" "$s_out" || [ "$s_in:$s_out" = '--:--' ]; } \
+        && [[ "$session_pct" =~ ^(--|[0-9]+\.[0-9])$ ]]; then
+        cache_hit=1
       fi
     fi
   fi
 
   if [ "$cache_hit" -eq 0 ]; then
+    is_uints "$mtime" || mtime=0
     local parsed=""
     parsed=$(
-      jq -n -R -r '
+      jq -n -R -r --argjson mtime "$mtime" '
+        def parse_ts: (strings | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601? | select(. > 0)) // 0;
+        def finite_pos: (type == "number") and (isnan | not) and (isinfinite | not) and . > 0;
+        def reset_turn: .turn_start = 0 | .turn_out = 0 | .turn_ended = false;
         # Rewind can reuse a step_index; both model calls still consumed tokens.
         reduce inputs as $line (
-          {first_ts: 0, total_in: null, total_out: null, cache_read: 0, missing_cache: false};
+          ({first_ts: 0, total_in: null, total_out: null, cache_read: 0, missing_cache: false} | reset_turn);
           (if .first_ts == 0 and ($line | contains("created_at")) then
-            (($line | fromjson? | objects | .created_at? | strings | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601?) // 0) as $ts
-            | if $ts > 0 then .first_ts = $ts else . end
+            .first_ts = (($line | fromjson? | objects | .created_at? | parse_ts) // 0)
            else . end)
-          | if ($line | contains("PLANNER_RESPONSE")) then
-              (($line | fromjson? | objects | select(.type == "PLANNER_RESPONSE")) // null) as $x
-              | if any($x | .input_tokens, .output_tokens, .cache_read_tokens, .cache_creation_tokens, .cache_creation_input_tokens; type == "number") then
-                  (($x.input_tokens // 0) + ($x.cache_read_tokens // 0)
-                    + ($x.cache_creation_tokens // $x.cache_creation_input_tokens // 0)) as $input
-                  | .total_in += $input
-                  | .total_out += ($x.output_tokens // 0)
-                  | .cache_read += ($x.cache_read_tokens // 0)
-                  | if $input > 0 and $x.cache_read_tokens == null then .missing_cache = true else . end
+          | if ($line | contains("USER_INPUT")) or ($line | contains("PLANNER_RESPONSE")) then
+              (($line | fromjson? | objects) // null) as $x
+              | if ($x.type? == "USER_INPUT") then
+                  reset_turn
+                elif ($x.type? == "PLANNER_RESPONSE") then
+                  (if any($x | .input_tokens, .output_tokens, .cache_read_tokens, .cache_creation_tokens, .cache_creation_input_tokens; type == "number") then
+                     (($x.input_tokens // 0) + ($x.cache_read_tokens // 0)
+                       + ($x.cache_creation_tokens // $x.cache_creation_input_tokens // 0)) as $input
+                     | .total_in += $input
+                     | .total_out += ($x.output_tokens // 0)
+                     | .cache_read += ($x.cache_read_tokens // 0)
+                     | if $input > 0 and $x.cache_read_tokens == null then .missing_cache = true else . end
+                   else . end)
+                  | (if .turn_ended then reset_turn else . end)
+                  | (if .turn_start == 0 then .turn_start = ($x.created_at? | parse_ts) else . end)
+                  | (if ($x.output_tokens? | finite_pos) then .turn_out += $x.output_tokens else . end)
+                  | .turn_ended = (
+                      ((($x.tool_calls? | type) == "array" and ($x.tool_calls | length) > 0)
+                       or (($x.truncated_fields? | type) == "array" and ($x.truncated_fields | index("tool_calls") != null)))
+                      | not)
                 else . end
             else . end
         )
@@ -548,15 +561,19 @@ load_session_tokens() {
               (.cache_read * 1000 / .total_in | round) as $t
               | "\($t / 10 | floor).\($t % 10)"
             else "--" end),
-           .first_ts] | @tsv
+           .first_ts,
+           (if .turn_out > 0 and .turn_start > 0 and $mtime > .turn_start then
+              (.turn_out / ($mtime - .turn_start) | round)
+            else 0 end)] | @tsv
       ' < "$tpath" 2>/dev/null
     ) || true
-    read -r s_in s_out session_pct first_ts <<< "$parsed" || true
+    read -r s_in s_out session_pct first_ts tok_speed <<< "$parsed" || true
     is_uints "$s_in" "$s_out" || [ "$s_in:$s_out" = '--:--' ] || return 0
     is_uints "$first_ts" || first_ts=0
+    is_uints "$tok_speed" || tok_speed=0
 
     if [ -n "$cache_file" ]; then
-      write_cache_file "$cache_dir" "$cache_file" "${mtime} ${size} ${s_in} ${s_out} ${session_pct} ${first_ts}"
+      write_cache_file "$cache_dir" "$cache_file" "${mtime} ${size} ${s_in} ${s_out} ${session_pct} ${first_ts} ${tok_speed}"
     fi
   fi
 
@@ -566,6 +583,7 @@ load_session_tokens() {
   if [ "$first_ts" -gt 0 ]; then
     SESSION_FIRST_TS="$first_ts"
   fi
+  SESSION_TOK_SPEED="$tok_speed"
   if [ "$s_in" != '--' ]; then
     DISP_IN="$s_in"
     DISP_OUT="$s_out"
@@ -675,15 +693,16 @@ fi
 [ -z "$TITLE_FMT" ] || partTitle="${FG_GRAY}▸ ${FG_WHITE}${TITLE_FMT}${R}"
 
 partCache="" partCost=""
-SESSION_CACHE_PCT="$CUR_CACHE_PCT" SESSION_FIRST_TS=0 DISP_IN="$TOK_IN" DISP_OUT="$TOK_OUT"
-if visible Tokens || visible Cache || visible Duration; then load_session_tokens; fi
+SESSION_CACHE_PCT="$CUR_CACHE_PCT" SESSION_FIRST_TS=0 SESSION_TOK_SPEED=0 DISP_IN="$TOK_IN" DISP_OUT="$TOK_OUT"
+if visible Tokens || visible TokenSpeed || visible Cache || visible Duration; then load_session_tokens; fi
 fmt_tokens total "$(( DISP_IN + DISP_OUT ))"
-fmt_metric partTokens token "$total"
+fmt_metric partTokens tok "$total"
 if [ "$NARROW" -eq 0 ]; then
   fmt_tokens input "$DISP_IN"
   fmt_tokens output "$DISP_OUT"
   partTokens+=" ${FG_GRAY}(${input}↑ ${output}↓)${R}"
 fi
+partTokenSpeed="${NUM_COLOR}${SESSION_TOK_SPEED}${R}${FG_GRAY} tok/s${R}"
 [ "$SESSION_CACHE_PCT" = "--" ] || fmt_metric partCache cache "${SESSION_CACHE_PCT}%"
 if [ "$SESSION_FIRST_TS" -gt 0 ] && [ "$NOW_EPOCH" -ge "$SESSION_FIRST_TS" ]; then
   fmt_duration partDuration "$((NOW_EPOCH - SESSION_FIRST_TS))"

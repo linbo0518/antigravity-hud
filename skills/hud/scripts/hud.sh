@@ -8,7 +8,7 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME:-/tmp}/.config}/statusline-hud"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 SETTINGS_FILE="${HUD_SETTINGS_FILE:-${HOME:-/tmp}/.gemini/antigravity-cli/settings.json}"
 
-CONFIG_DEFAULTS='{"showMode":true,"showModel":true,"showContext":true,"showPath":true,"showGit":true,"showGeminiQuota":true,"show3pQuota":true,"showArtifacts":true,"showSubagents":true,"showTasks":true,"showSandbox":true,"showTokens":true,"showCache":true,"showDuration":true,"showCost":true,"showTitle":true}'
+CONFIG_DEFAULTS='{"showMode":true,"showModel":true,"showContext":true,"showPath":true,"showGit":true,"showGeminiQuota":true,"show3pQuota":true,"showArtifacts":true,"showSubagents":true,"showTasks":true,"showSandbox":true,"showTokens":true,"showTokenSpeed":true,"showCache":true,"showDuration":true,"showCost":true,"showTitle":true}'
 
 JQ_JSON_LIB='
   def parse_object: ltrimstr("\ufeff") | fromjson | if type == "object" then . else error("not object") end;
@@ -298,7 +298,7 @@ cmd_config() {
 }
 
 cmd_preview() {
-  local width="${1:-120}" script_path payload
+  local width="${1:-120}" script_path payload tmp_trans="" rc=0
   if [ "$#" -gt 1 ]; then printf 'Usage: hud.sh preview [width]\n' >&2; exit 1; fi
   if ! [[ "$width" =~ ^[0-9]+$ ]] || [ "$width" -lt 20 ]; then
     printf 'Error: width must be an integer >= 20\n' >&2
@@ -313,11 +313,25 @@ cmd_preview() {
     exit 1
   fi
   if command -v jq >/dev/null 2>&1; then
-    payload=$(printf '%s' "$PREVIEW_PAYLOAD" | jq -c --argjson w "$width" '.terminal_width = $w')
+    tmp_trans=$(mktemp "${TMPDIR:-/tmp}/statusline-hud-preview.XXXXXX" 2>/dev/null || true)
+    if [ -n "$tmp_trans" ]; then
+      jq -nc '
+        (now | floor) as $t
+        | {step_index:0,type:"USER_INPUT",created_at:(($t - 900) | todateiso8601)},
+          {step_index:1,type:"PLANNER_RESPONSE",created_at:(($t - 900) | todateiso8601),input_tokens:31000,cache_read_tokens:132000,output_tokens:2000},
+          {step_index:2,type:"USER_INPUT",created_at:(($t - 60) | todateiso8601)},
+          {step_index:3,type:"PLANNER_RESPONSE",created_at:(($t - 60) | todateiso8601),input_tokens:30000,cache_read_tokens:68000,output_tokens:5000}
+      ' > "$tmp_trans" 2>/dev/null || { rm -f "$tmp_trans" 2>/dev/null || true; tmp_trans=""; }
+    fi
+    payload=$(printf '%s' "$PREVIEW_PAYLOAD" | jq -c --argjson w "$width" --arg tp "$tmp_trans" '
+      .terminal_width = $w | if $tp != "" then .transcript_path = $tp else . end
+    ')
   else
     payload="$PREVIEW_PAYLOAD"
   fi
-  printf '%s' "$payload" | "$script_path" | awk '{gsub(/\033\[[0-9;]*m/, "")}1'
+  printf '%s' "$payload" | "$script_path" | awk '{gsub(/\033\[[0-9;]*m/, "")}1' || rc=$?
+  [ -z "$tmp_trans" ] || rm -f "$tmp_trans" 2>/dev/null || true
+  return "$rc"
 }
 
 cmd_update() {

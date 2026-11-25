@@ -59,16 +59,28 @@ assert_eq() {
   fi
 }
 
+iso_at() {
+  date -u -d "@$1" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+    || date -u -r "$1" '+%Y-%m-%dT%H:%M:%SZ'
+}
+
+touch_at() {
+  local stamp
+  stamp=$(date -u -d "@$1" '+%Y%m%d%H%M.%S' 2>/dev/null \
+    || date -u -r "$1" '+%Y%m%d%H%M.%S')
+  TZ=UTC touch -t "$stamp" "$2"
+}
+
 # Build a synthetic transcript with a non-planner row whose content contains "PLANNER_RESPONSE"
 NOW_S=$(date +%s)
-START_ISO=$(date -u -d "@$((NOW_S - 900))" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
-  || date -u -r "$((NOW_S - 900))" '+%Y-%m-%dT%H:%M:%SZ')
+START_ISO=$(iso_at "$((NOW_S - 900))")
 SYN_TRANS="${TMP_DIR}/transcript.jsonl"
 cat > "$SYN_TRANS" <<EOF
 {"step_index":0,"type":"USER_INPUT","created_at":"${START_ISO}","content":"hello"}
 {"step_index":1,"type":"PLANNER_RESPONSE","created_at":"${START_ISO}","input_tokens":10000,"cache_read_tokens":90000,"output_tokens":5000}
 {"step_index":2,"type":"GENERIC","created_at":"${START_ISO}","content":"mentions PLANNER_RESPONSE inside tool output"}
 EOF
+touch_at "$NOW_S" "$SYN_TRANS"
 
 # Wide working session with transcript usage and conflicting sandbox reports.
 OUT=$("$STATUSLINE" <<EOF
@@ -88,18 +100,58 @@ assert_eq "default wide line count" "$(printf '%s\n' "$PLAIN" | wc -l | tr -d ' 
 assert_contains "top-level false wins over workspace true" "$PLAIN" "sandbox OFF"
 assert_contains "wide mode" "$PLAIN" "PLAN"
 assert_contains "wide subagents" "$PLAIN" "subagents 1/2"
-assert_contains "wide transcript tokens" "$PLAIN" "token 105k (100k↑ 5k↓)"
+assert_contains "wide transcript tokens" "$PLAIN" "tok 105k (100k↑ 5k↓)"
+assert_contains "wide transcript token speed" "$PLAIN" "6 tok/s"
 assert_contains "wide transcript cache 1dp" "$PLAIN" "cache 90.0%"
 assert_contains "wide transcript duration" "$PLAIN" "15m"
 assert_contains "wide cost" "$PLAIN" '~$0.42'
+
+# Turn speed: skips prior turns & CHECKPOINT gap, handles "USER_INPUT" text in planner content, works without conversation_id.
+TURN_TRANS="${TMP_DIR}/turn-speed.jsonl"
+cat > "$TURN_TRANS" <<EOF
+{"step_index":0,"type":"USER_INPUT","created_at":"$(iso_at $((NOW_S - 900)))","content":"old turn"}
+{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"$(iso_at $((NOW_S - 900)))","input_tokens":1000,"cache_read_tokens":0,"output_tokens":1000}
+{"step_index":2,"type":"USER_INPUT","created_at":"$(iso_at $((NOW_S - 100)))","content":"current turn"}
+{"step_index":3,"type":"CHECKPOINT","created_at":"$(iso_at $((NOW_S - 100)))"}
+{"step_index":4,"type":"PLANNER_RESPONSE","created_at":"$(iso_at $((NOW_S - 50)))","input_tokens":1000,"cache_read_tokens":0,"output_tokens":1000,"tool_calls":[{"name":"read"}],"content":"mentions USER_INPUT"}
+{"step_index":5,"type":"GENERIC","created_at":"$(iso_at $((NOW_S - 25)))"}
+{"step_index":6,"type":"PLANNER_RESPONSE","created_at":"$(iso_at $((NOW_S - 20)))","input_tokens":1000,"cache_read_tokens":0,"output_tokens":3000}
+EOF
+touch_at "$NOW_S" "$TURN_TRANS"
+OUT=$("$STATUSLINE" <<< "{\"cwd\":\"/tmp\",\"transcript_path\":\"${TURN_TRANS}\",\"terminal_width\":120}")
+PLAIN=$(strip_ansi "$OUT")
+assert_contains "turn speed excludes checkpoint and previous turn without conv_id" "$PLAIN" "│ 80 tok/s │"
+
+# System wake-up after completed turn (no tool_calls) starts a fresh turn; legacy 6-col cache auto-refreshes.
+WAKE_TRANS="${TMP_DIR}/wake-speed.jsonl"
+cat > "$WAKE_TRANS" <<EOF
+{"step_index":0,"type":"USER_INPUT","created_at":"$(iso_at $((NOW_S - 600)))","content":"first"}
+{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"$(iso_at $((NOW_S - 600)))","input_tokens":500,"cache_read_tokens":0,"output_tokens":500}
+{"step_index":2,"type":"SYSTEM_MESSAGE","created_at":"$(iso_at $((NOW_S - 40)))","content":"subagent done"}
+{"step_index":3,"type":"PLANNER_RESPONSE","created_at":"$(iso_at $((NOW_S - 40)))","input_tokens":500,"cache_read_tokens":0,"output_tokens":2000}
+EOF
+touch_at "$NOW_S" "$WAKE_TRANS"
+OUT=$("$STATUSLINE" <<< "{\"cwd\":\"/tmp\",\"conversation_id\":\"wake-conv\",\"transcript_path\":\"${WAKE_TRANS}\",\"terminal_width\":120}")
+assert_contains "system wake-up resets turn speed" "$(strip_ansi "$OUT")" "│ 50 tok/s │"
+WAKE_CACHE="${XDG_CACHE_HOME}/statusline-hud/transcript/wake-conv.cache"
+WAKE_STAT=$(stat -c '%Y %s' "$WAKE_TRANS" 2>/dev/null || stat -f '%m %z' "$WAKE_TRANS")
+printf '%s 1000 2500 0.0 %s\n' "$WAKE_STAT" "$((NOW_S - 600))" > "$WAKE_CACHE"
+OUT=$("$STATUSLINE" <<< "{\"cwd\":\"/tmp\",\"conversation_id\":\"wake-conv\",\"transcript_path\":\"${WAKE_TRANS}\",\"terminal_width\":120}")
+assert_contains "legacy 6-column transcript cache refreshes speed" "$(strip_ansi "$OUT")" "│ 50 tok/s │"
+
+# Trailing USER_INPUT with no planner response yet resets speed to 0 tok/s.
+printf '{"step_index":4,"type":"USER_INPUT","created_at":"%s","content":"next"}\n' "$(iso_at "$NOW_S")" >> "$WAKE_TRANS"
+touch_at "$((NOW_S + 5))" "$WAKE_TRANS"
+OUT=$("$STATUSLINE" <<< "{\"cwd\":\"/tmp\",\"conversation_id\":\"wake-conv\",\"transcript_path\":\"${WAKE_TRANS}\",\"terminal_width\":120}")
+assert_contains "new turn without response yet shows 0 tok/s" "$(strip_ansi "$OUT")" "│ 0 tok/s │"
 
 # Transcript cache distinguishes no planner rows (keeps payload tokens) from explicit zero usage.
 for usage in '{}' '{"type":"PLANNER_RESPONSE","input_tokens":0,"output_tokens":0}'; do
   printf '%s\n' "$usage" > "$TMP_DIR/zero.jsonl"
   for run in 1 2; do
     OUT=$("$STATUSLINE" <<< "{\"cwd\":\"/tmp\",\"conversation_id\":\"zero\",\"transcript_path\":\"$TMP_DIR/zero.jsonl\",\"context_window\":{\"total_input_tokens\":500,\"total_output_tokens\":100}}")
-    if [ "$usage" = '{}' ]; then assert_contains "no planner usage keeps payload tokens ($run)" "$(strip_ansi "$OUT")" "token 600"
-    else assert_contains "zero transcript usage ($run)" "$(strip_ansi "$OUT")" "token 0"; fi
+    if [ "$usage" = '{}' ]; then assert_contains "no planner usage keeps payload tokens ($run)" "$(strip_ansi "$OUT")" "tok 600"
+    else assert_contains "zero transcript usage ($run)" "$(strip_ansi "$OUT")" "tok 0"; fi
   done
 done
 
@@ -139,12 +191,12 @@ assert_contains "remaining_amount has left label" "$PLAIN" "3P 5h 42 left"
 # Omitted fields use defaults; the empty quota row is omitted.
 OUT=$("$STATUSLINE" <<< '{"cwd":"/tmp","terminal_width":120}')
 PLAIN=$(strip_ansi "$OUT")
-assert_eq "omitted wide defaults" "$PLAIN" $'  ● READY │ ctx ░░░░░░░░░░ 0.0% │ /tmp\n  artifacts 0 │ subagents 0/0 │ tasks 0 │ sandbox OFF │ token 0 (0↑ 0↓) │ 0m'
+assert_eq "omitted wide defaults" "$PLAIN" $'  ● READY │ ctx ░░░░░░░░░░ 0.0% │ /tmp\n  artifacts 0 │ subagents 0/0 │ tasks 0 │ sandbox OFF │ tok 0 (0↑ 0↓) │ 0 tok/s │ 0m'
 
 # A very narrow pane keeps the selected components even when they overflow.
 OUT=$("$STATUSLINE" <<< '{"cwd":"/项目/很长的项目名","conversation_title":"✨ 修复标题","task_count":1,"terminal_width":20,"model":{"id":"gemini-4-neon","display_name":"Gemini 4 Neon (XHigh)"},"vcs":{"branch":"feature/很长的分支名"}}')
 PLAIN=$(strip_ansi "$OUT")
-assert_eq "no pruning, no separate title row" "$PLAIN" $'  ● READY │ Gemini 4 Neon (XHigh) │ ctx 0.0% │ …/很长的项目名 │ feature/很长的分支名\n  artifacts 0 │ subagents 0/0 │ tasks 1 │ sandbox OFF │ token 0 │ 0m │ ▸ ✨ 修复标题'
+assert_eq "no pruning, no separate title row" "$PLAIN" $'  ● READY │ Gemini 4 Neon (XHigh) │ ctx 0.0% │ …/很长的项目名 │ feature/很长的分支名\n  artifacts 0 │ subagents 0/0 │ tasks 1 │ sandbox OFF │ tok 0 │ 0 tok/s │ 0m │ ▸ ✨ 修复标题'
 
 # LC_ALL=C locale safety (no broken UTF-8 bar bytes, still shows bar on wide screen)
 OUT=$(LC_ALL=C "$STATUSLINE" <<< '{
@@ -177,14 +229,14 @@ for cols in 99 100; do
   }")
   PLAIN=$(strip_ansi "$OUT")
   if [ "$cols" -eq 99 ]; then
-    assert_eq "narrow delta both directions, stable order" "$PLAIN" $'  ● READY │ ctx 0.0% │ /tmp\n  Gemini 5h 50.0%\n  subagents 0/0 │ tasks 2 │ sandbox OFF │ token 0 │ 0m'
+    assert_eq "narrow delta both directions, stable order" "$PLAIN" $'  ● READY │ ctx 0.0% │ /tmp\n  Gemini 5h 50.0%\n  subagents 0/0 │ tasks 2 │ sandbox OFF │ tok 0 │ 0 tok/s │ 0m'
   else
-    assert_eq "ordinary switches at 100 cols" "$PLAIN" $'  ● READY │ ctx ░░░░░░░░░░ 0.0% │ /tmp\n  3P 5h 42 left\n  artifacts 1 │ subagents 0/0 │ token 0 (0↑ 0↓) │ 0m │ ▸ My title'
+    assert_eq "ordinary switches at 100 cols" "$PLAIN" $'  ● READY │ ctx ░░░░░░░░░░ 0.0% │ /tmp\n  3P 5h 42 left\n  artifacts 1 │ subagents 0/0 │ tok 0 (0↑ 0↓) │ 0 tok/s │ 0m │ ▸ My title'
   fi
 done
 
 # Empty narrow inherits ordinary switches; empty rows have no placeholder.
-printf '%s\n' '{"showModel":false,"showContext":false,"showPath":false,"showArtifacts":false,"showSubagents":false,"showTasks":false,"showSandbox":false,"showTokens":false,"showDuration":false,"narrow":{}}' > "$CFG_CUSTOM/statusline-hud/config.json"
+printf '%s\n' '{"showModel":false,"showContext":false,"showPath":false,"showArtifacts":false,"showSubagents":false,"showTasks":false,"showSandbox":false,"showTokens":false,"showTokenSpeed":false,"showDuration":false,"narrow":{}}' > "$CFG_CUSTOM/statusline-hud/config.json"
 OUT=$(XDG_CONFIG_HOME="$CFG_CUSTOM" "$STATUSLINE" <<< '{"cwd":"/tmp","model":{"id":"hidden"},"terminal_width":80}')
 assert_eq "only the status row remains" "$(strip_ansi "$OUT")" '  ● READY'
 OUT=$(XDG_CONFIG_HOME="$CFG_CUSTOM" "$STATUSLINE" <<< '{"cwd":"/tmp","model":{"id":"hidden"},"conversation_title":"Only title","terminal_width":80}')
@@ -390,11 +442,18 @@ assert_contains "doctor smoke passes" "$DOC_OUT" "smoke:    OK"
 "$HUD_CTL" toggle narrow.showCost >/dev/null
 PREV_OUT=$("$HUD_CTL" preview 80)
 assert_contains "narrow toggle enables cost" "$PREV_OUT" '~$0.42'
+assert_contains "preview includes token speed" "$PREV_OUT" 'tok/s'
+assert_contains "preview uses tok label" "$PREV_OUT" 'tok 268k'
 assert_not_contains "narrow hides tasks" "$PREV_OUT" 'tasks 1'
 assert_not_contains "preview strips ANSI" "$PREV_OUT" $'\033['
 PREV_OUT=$("$HUD_CTL" preview 120)
 assert_contains "wide still includes tasks" "$PREV_OUT" 'tasks 1'
 assert_not_contains "wide still hides cost" "$PREV_OUT" '~$0.42'
+"$HUD_CTL" set showTokenSpeed=false >/dev/null
+assert_not_contains "showTokenSpeed=false hides tok/s" "$("$HUD_CTL" preview 120)" 'tok/s'
+"$HUD_CTL" set narrow.showTokenSpeed=true >/dev/null
+assert_contains "narrow.showTokenSpeed=true overrides hidden speed" "$("$HUD_CTL" preview 80)" 'tok/s'
+"$HUD_CTL" unset showTokenSpeed narrow.showTokenSpeed >/dev/null
 "$HUD_CTL" unset narrow.showCost >/dev/null
 PREV_OUT=$("$HUD_CTL" preview 80)
 assert_not_contains "narrow preview inherits hidden cost after unset" "$PREV_OUT" '~$0.42'
