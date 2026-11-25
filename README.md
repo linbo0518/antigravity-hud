@@ -52,7 +52,7 @@ Everything is handled through `/hud` or plain natural language inside `agy`—no
 
 - **Git**: `[...]` status flags (`=` conflicted, `+` staged, `!` modified, `✘` deleted, `»` renamed, `?` untracked, `$` stashed, `↑N`/`↓N` ahead/behind) and `(+N −M)` tracked diff lines; narrow panes show `*` when dirty.
 - **Quota**: used % (green `<60%`, yellow `60–89%`, red `>=90%`) + reset time; count-only buckets show `<N> left`.
-- **Tokens**: `tok <total> (<input>↑ <output>↓)` across the session, followed by `<N> tok/s` for the current turn's end-to-end output rate.
+- **Tokens**: `tok <total> (<input>↑ <output>↓)` across the session (including subagents), followed by `<N> tok/s` for the main agent's current-turn output rate.
 
 ## Uninstall
 

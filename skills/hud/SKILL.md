@@ -38,7 +38,7 @@ Location: `${XDG_CONFIG_HOME:-~/.config}/statusline-hud/config.json` (hot-reload
 | --- | --- | --- |
 | 1 | `showMode`, `showModel`, `showContext`, `showPath`, `showGit` | Core status (`● READY`, `⚙ WORKING`, `⚠ CONFIRM (+N)`, etc.) always starts row 1; `showMode` covers `PLAN`/`EDITS`/`AUTO` + Vim `[N]`/`[I]`/`[V]`/`[VL]` |
 | 2 | `showGeminiQuota`, `show3pQuota` | Gemini and third-party 5h / weekly quota buckets |
-| 3 | `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showTokenSpeed`, `showCache`, `showDuration`, `showCost`, `showTitle` | `showSubagents` shows `running/total`; `showTokenSpeed` shows `<N> tok/s` for the current turn from transcript; `showDuration` shows elapsed time from transcript; `showTitle` appends `▸ <title>` |
+| 3 | `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showTokenSpeed`, `showCache`, `showDuration`, `showCost`, `showTitle` | `showSubagents` shows `running/total`; `showTokens`, `showCache`, and `showCost` cover the full session including subagents; `showTokenSpeed` shows `<N> tok/s` for the main agent's current turn; `showDuration` shows elapsed time from transcript; `showTitle` appends `▸ <title>` |
 
 - All switches are booleans defaulting to `true`.
 - Enabled count and state items (`showContext`, `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showTokenSpeed`, `showDuration`) show `0`, `0.0%`, `0 tok/s`, `0m`, or `OFF` even when omitted by the CLI; disabled items, items with no value (such as an untitled session, non-Git path, or unreported quota/cache/cost), and empty rows are omitted.
