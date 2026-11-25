@@ -2,7 +2,7 @@
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "statusline-hud",
   "displayName": "Statusline HUD",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Adaptive multi-line terminal HUD statusline and interactive /hud configuration skill for Antigravity CLI, with per-component narrow-screen overrides.",
   "logo": "assets/logo.svg",
   "author": {
