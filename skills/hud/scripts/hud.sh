@@ -11,8 +11,7 @@ SETTINGS_FILE="${HUD_SETTINGS_FILE:-${HOME:-/tmp}/.gemini/antigravity-cli/settin
 CONFIG_DEFAULTS='{"showMode":true,"showModel":true,"showContext":true,"showPath":true,"showGit":true,"showGeminiQuota":true,"show3pQuota":true,"showArtifacts":true,"showSubagents":true,"showTasks":true,"showSandbox":true,"showTokens":true,"showCache":true,"showDuration":true,"showCost":true,"showTitle":true}'
 
 JQ_JSON_LIB='
-  def strip_bom: ltrimstr("\ufeff");
-  def parse_object: strip_bom | fromjson | if type == "object" then . else error("not object") end;
+  def parse_object: ltrimstr("\ufeff") | fromjson | if type == "object" then . else error("not object") end;
 '
 
 PREVIEW_PAYLOAD='{"cwd":"/home/user/projects/statusline-hud","conversation_title":"Refactor statusline layout","agent_state":"working","cycle_mode":"plan","model":{"display_name":"Gemini 4 Neon (XHigh)"},"vcs":{"type":"git","branch":"main","dirty":true},"context_window":{"used_percentage":18.4,"total_input_tokens":261000,"total_output_tokens":7000,"current_usage":{"input_tokens":30000,"cache_read_input_tokens":98000,"cache_creation_input_tokens":0}},"quota":{"gemini-5h":{"remaining_fraction":0.82,"reset_in_seconds":3600},"gemini-weekly":{"remaining_fraction":0.93,"reset_in_seconds":560580},"3p-5h":{"remaining_fraction":0.70,"reset_in_seconds":7200},"3p-weekly":{"remaining_fraction":0.85,"reset_in_seconds":400000}},"artifact_count":2,"subagents":[{"name":"a","status":"running"},{"name":"b","status":"completed"}],"task_count":1,"sandbox":{"enabled":false},"cost":{"total_usd":0.42,"estimated":true},"terminal_width":120}'
@@ -127,7 +126,7 @@ print_effective_config() {
   jq -nr "${cfg[@]}" --argjson defaults "$CONFIG_DEFAULTS" "${JQ_JSON_LIB}"'
     def switches: if type == "object" then with_entries(select(.value | type == "boolean")) else {} end;
     def mark: if . then "[ON]" else "[OFF]" end;
-    (($raw | strip_bom | fromjson? | objects) // {}) as $c
+    ($raw | try parse_object catch {}) as $c
     | ($defaults + ($c | switches)) as $base
     | ($c.narrow | switches) as $narrow
     | $defaults | keys_unsorted[] as $k
