@@ -527,33 +527,30 @@ load_session_tokens() {
         def parse_ts: (strings | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601? | select(. > 0)) // 0;
         def finite_pos: (type == "number") and (isnan | not) and (isinfinite | not) and . > 0;
         def reset_turn: .turn_start = 0 | .turn_out = 0 | .turn_ended = false;
-        # Rewind can reuse a step_index; both model calls still consumed tokens.
-        reduce inputs as $line (
-          ({first_ts: 0, total_in: null, total_out: null, cache_read: 0, missing_cache: false} | reset_turn);
-          (if .first_ts == 0 and ($line | contains("created_at")) then
-            .first_ts = (($line | fromjson? | objects | .created_at? | parse_ts) // 0)
-           else . end)
-          | if ($line | contains("USER_INPUT")) or ($line | contains("PLANNER_RESPONSE")) then
-              (($line | fromjson? | objects) // null) as $x
-              | if ($x.type? == "USER_INPUT") then
-                  reset_turn
-                elif ($x.type? == "PLANNER_RESPONSE") then
-                  (if any($x | .input_tokens, .output_tokens, .cache_read_tokens, .cache_creation_tokens, .cache_creation_input_tokens; type == "number") then
-                     (($x.input_tokens // 0) + ($x.cache_read_tokens // 0)
-                       + ($x.cache_creation_tokens // $x.cache_creation_input_tokens // 0)) as $input
-                     | .total_in += $input
-                     | .total_out += ($x.output_tokens // 0)
-                     | .cache_read += ($x.cache_read_tokens // 0)
-                     | if $input > 0 and $x.cache_read_tokens == null then .missing_cache = true else . end
-                   else . end)
-                  | (if .turn_ended then reset_turn else . end)
-                  | (if .turn_start == 0 then .turn_start = ($x.created_at? | parse_ts) else . end)
-                  | (if ($x.output_tokens? | finite_pos) then .turn_out += $x.output_tokens else . end)
-                  | .turn_ended = (
-                      ((($x.tool_calls? | type) == "array" and ($x.tool_calls | length) > 0)
-                       or (($x.truncated_fields? | type) == "array" and ($x.truncated_fields | index("tool_calls") != null)))
-                      | not)
-                else . end
+        # Rewind can reuse a step_index; all model calls still consumed tokens,
+        # while a finished turn, USER_INPUT, or strict step_index drop resets turn speed.
+        reduce (inputs | fromjson? | objects) as $x (
+          ({first_ts: 0, last_step: null, total_in: null, total_out: null, cache_read: 0, missing_cache: false} | reset_turn);
+          (if .first_ts == 0 then .first_ts = ($x.created_at? | parse_ts) else . end)
+          | (if ($x.step_index? | type) == "number" then $x.step_index else null end) as $step
+          | (if .turn_ended or ($x.type? == "USER_INPUT")
+                or ($step != null and .last_step != null and $step < .last_step) then reset_turn else . end)
+          | (if $step != null then .last_step = $step else . end)
+          | if ($x.type? == "PLANNER_RESPONSE") then
+              (if any($x | .input_tokens, .output_tokens, .cache_read_tokens, .cache_creation_tokens, .cache_creation_input_tokens; type == "number") then
+                 (($x.input_tokens // 0) + ($x.cache_read_tokens // 0)
+                   + ($x.cache_creation_tokens // $x.cache_creation_input_tokens // 0)) as $input
+                 | .total_in += $input
+                 | .total_out += ($x.output_tokens // 0)
+                 | .cache_read += ($x.cache_read_tokens // 0)
+                 | if $input > 0 and $x.cache_read_tokens == null then .missing_cache = true else . end
+               else . end)
+              | (if .turn_start == 0 then .turn_start = ($x.created_at? | parse_ts) else . end)
+              | (if ($x.output_tokens? | finite_pos) then .turn_out += $x.output_tokens else . end)
+              | .turn_ended = (
+                  ((($x.tool_calls? | type) == "array" and ($x.tool_calls | length) > 0)
+                   or (($x.truncated_fields? | type) == "array" and ($x.truncated_fields | index("tool_calls") != null)))
+                  | not)
             else . end
         )
         | [.total_in // "--", .total_out // "--",

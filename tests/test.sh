@@ -77,7 +77,7 @@ START_ISO=$(iso_at "$((NOW_S - 900))")
 SYN_TRANS="${TMP_DIR}/transcript.jsonl"
 cat > "$SYN_TRANS" <<EOF
 {"step_index":0,"type":"USER_INPUT","created_at":"${START_ISO}","content":"hello"}
-{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"${START_ISO}","input_tokens":10000,"cache_read_tokens":90000,"output_tokens":5000}
+{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"${START_ISO}","input_tokens":10000,"cache_read_tokens":90000,"output_tokens":5000,"tool_calls":[{"name":"run"}]}
 {"step_index":2,"type":"GENERIC","created_at":"${START_ISO}","content":"mentions PLANNER_RESPONSE inside tool output"}
 EOF
 touch_at "$NOW_S" "$SYN_TRANS"
@@ -154,6 +154,32 @@ for usage in '{}' '{"type":"PLANNER_RESPONSE","input_tokens":0,"output_tokens":0
     else assert_contains "zero transcript usage ($run)" "$(strip_ansi "$OUT")" "tok 0"; fi
   done
 done
+
+# Trailing SYSTEM_MESSAGE after an ended turn resets speed to 0 tok/s instead of collapsing on refreshed mtime.
+WAIT_TRANS="${TMP_DIR}/wait-wakeup.jsonl"
+cat > "$WAIT_TRANS" <<EOF
+{"step_index":0,"type":"USER_INPUT","created_at":"$(iso_at $((NOW_S - 600)))","content":"first"}
+{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"$(iso_at $((NOW_S - 600)))","input_tokens":500,"cache_read_tokens":0,"output_tokens":1500}
+{"step_index":2,"type":"SYSTEM_MESSAGE","created_at":"$(iso_at "$NOW_S")","content":"subagent done"}
+EOF
+touch_at "$NOW_S" "$WAIT_TRANS"
+OUT=$("$STATUSLINE" <<< "{\"cwd\":\"/tmp\",\"conversation_id\":\"wait-conv\",\"transcript_path\":\"${WAIT_TRANS}\",\"terminal_width\":120}")
+assert_contains "trailing SYSTEM_MESSAGE after ended turn shows 0 tok/s" "$(strip_ansi "$OUT")" "│ 0 tok/s │"
+
+# Rewind (strict step_index drop) during an unfinished turn resets speed even on SYSTEM_MESSAGE wake-up, while retaining consumed tokens.
+RW_TRANS="${TMP_DIR}/rewind-mid-turn.jsonl"
+cat > "$RW_TRANS" <<EOF
+{"step_index":0,"type":"USER_INPUT","created_at":"$(iso_at $((NOW_S - 600)))","content":"start"}
+{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"$(iso_at $((NOW_S - 600)))","input_tokens":1000,"cache_read_tokens":0,"output_tokens":2000,"tool_calls":[{"name":"read"}]}
+{"step_index":2,"type":"GENERIC","created_at":"$(iso_at $((NOW_S - 590)))"}
+{"step_index":1,"type":"SYSTEM_MESSAGE","created_at":"$(iso_at $((NOW_S - 20)))","content":"subagent done"}
+{"step_index":2,"type":"PLANNER_RESPONSE","created_at":"$(iso_at $((NOW_S - 20)))","input_tokens":1000,"cache_read_tokens":0,"output_tokens":1000}
+EOF
+touch_at "$NOW_S" "$RW_TRANS"
+OUT=$("$STATUSLINE" <<< "{\"cwd\":\"/tmp\",\"conversation_id\":\"rw-conv\",\"transcript_path\":\"${RW_TRANS}\",\"terminal_width\":120}")
+PLAIN=$(strip_ansi "$OUT")
+assert_contains "rewind keeps consumed tokens" "$PLAIN" "tok 5k (2k↑ 3k↓)"
+assert_contains "rewind strict step_index drop resets turn speed" "$PLAIN" "│ 50 tok/s │"
 
 # Confirmation takes priority over tool use; usage falls back to the payload.
 OUT=$("$STATUSLINE" <<< '{
