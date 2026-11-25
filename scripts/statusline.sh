@@ -482,38 +482,31 @@ parse_git_status() {
   write_cache_file "$gdir" "$gfile" "$_cache_row"
 }
 
-load_session_tokens() {
-  local valid_conv_id=0 tpath=""
-  [[ "$CONV_ID" =~ ^[A-Za-z0-9._-]+$ ]] && valid_conv_id=1
-
-  if [ -n "$TRANSCRIPT_PATH" ] && [ -r "$TRANSCRIPT_PATH" ]; then
-    tpath="$TRANSCRIPT_PATH"
-  elif [ "$valid_conv_id" -eq 1 ] && [ -n "${HOME:-}" ]; then
-    local alt="${HOME}/.gemini/antigravity-cli/brain/${CONV_ID}/.system_generated/logs/transcript.jsonl"
-    [ -r "$alt" ] && tpath="$alt"
-  fi
-  [ -n "$tpath" ] || return 0
-
-  local cache_dir="${CACHE_ROOT}/transcript" cache_file="" mtime="" size="" cache_hit=0
-  local c_mtime="" c_size="" s_in="" s_out="" session_pct="" first_ts="0" tok_speed="0"
-  local stat_info=""
-
+stat_meta() {
   case "${OSTYPE:-}" in
-    darwin*|*bsd*) stat_info=$(stat -f '%m %z' "$tpath" 2>/dev/null) || true ;;
-    *)             stat_info=$(stat -c '%Y %s' "$tpath" 2>/dev/null) || true ;;
+    darwin*|*bsd*) stat -f '%m %z' "$@" 2>/dev/null || true ;;
+    *)             stat -c '%Y %s' "$@" 2>/dev/null || true ;;
   esac
-  if [[ "$stat_info" == *" "* ]]; then
-    mtime="${stat_info%% *}"
-    size="${stat_info#* }"
+}
+
+read_transcript() {
+  local cid="$1" tpath="$2" mtime="${3:-}" size="${4:-}" cache_dir="${CACHE_ROOT}/transcript"
+  local cache_file="" cache_hit=0
+  local c_ver="" c_mtime="" c_size="" s_in="" s_out="" s_cr="" first_ts="0" tok_speed="0"
+  T_IN="--" T_OUT="--" T_CR="--" T_FIRST_TS=0 T_SPEED=0
+
+  if ! is_uints "$mtime" "$size"; then
+    read -r mtime size <<< "$(stat_meta "$tpath")" || true
   fi
 
-  if [ "$valid_conv_id" -eq 1 ] && is_uints "$mtime" "$size"; then
-    cache_file="${cache_dir}/${CONV_ID}.cache"
+  if [[ "$cid" =~ ^[A-Za-z0-9._-]+$ ]] && is_uints "$mtime" "$size"; then
+    cache_file="${cache_dir}/${cid}.cache"
     if [ -r "$cache_file" ]; then
-      read -r c_mtime c_size s_in s_out session_pct first_ts tok_speed < "$cache_file" || true
-      if [ "$c_mtime" = "$mtime" ] && [ "$c_size" = "$size" ] \
-        && is_uints "$first_ts" "$tok_speed" && { is_uints "$s_in" "$s_out" || [ "$s_in:$s_out" = '--:--' ]; } \
-        && [[ "$session_pct" =~ ^(--|[0-9]+\.[0-9])$ ]]; then
+      read -r c_ver c_mtime c_size s_in s_out s_cr first_ts tok_speed < "$cache_file" || true
+      if [ "$c_ver" = "v2" ] && [ "$c_mtime" = "$mtime" ] && [ "$c_size" = "$size" ] \
+        && is_uints "$first_ts" "$tok_speed" \
+        && { is_uints "$s_in" "$s_out" || [ "$s_in:$s_out" = '--:--' ]; } \
+        && { is_uints "$s_cr" || [ "$s_cr" = '--' ]; }; then
         cache_hit=1
       fi
     fi
@@ -558,36 +551,107 @@ load_session_tokens() {
             else . end
         )
         | [.total_in // "--", .total_out // "--",
-           (if .total_in > 0 and (.missing_cache | not) then
-              (.cache_read * 1000 / .total_in | round) as $t
-              | "\($t / 10 | floor).\($t % 10)"
-            else "--" end),
+           (if .total_in != null and (.missing_cache | not) then .cache_read else "--" end),
            .first_ts,
            (if .turn_out > 0 and .turn_start > 0 and $mtime > .turn_start then
               (.turn_out / ($mtime - .turn_start) | round)
             else 0 end)] | @tsv
       ' < "$tpath" 2>/dev/null
     ) || true
-    read -r s_in s_out session_pct first_ts tok_speed <<< "$parsed" || true
+    read -r s_in s_out s_cr first_ts tok_speed <<< "$parsed" || true
     is_uints "$s_in" "$s_out" || [ "$s_in:$s_out" = '--:--' ] || return 0
+    is_uints "$s_cr" || [ "$s_cr" = '--' ] || s_cr="--"
     is_uints "$first_ts" || first_ts=0
     is_uints "$tok_speed" || tok_speed=0
 
     if [ -n "$cache_file" ]; then
-      write_cache_file "$cache_dir" "$cache_file" "${mtime} ${size} ${s_in} ${s_out} ${session_pct} ${first_ts} ${tok_speed}"
+      write_cache_file "$cache_dir" "$cache_file" "v2 ${mtime} ${size} ${s_in} ${s_out} ${s_cr} ${first_ts} ${tok_speed}"
     fi
   fi
 
-  if [ "$session_pct" != "--" ]; then
-    SESSION_CACHE_PCT="$session_pct"
+  T_IN="$s_in"
+  T_OUT="$s_out"
+  T_CR="$s_cr"
+  T_FIRST_TS="$first_ts"
+  T_SPEED="$tok_speed"
+}
+
+load_session_tokens() {
+  local tpath=""
+  if [ -n "$TRANSCRIPT_PATH" ] && [ -r "$TRANSCRIPT_PATH" ]; then
+    tpath="$TRANSCRIPT_PATH"
+  elif [[ "$CONV_ID" =~ ^[A-Za-z0-9._-]+$ ]] && [ -n "${HOME:-}" ]; then
+    local alt="${HOME}/.gemini/antigravity-cli/brain/${CONV_ID}/.system_generated/logs/transcript.jsonl"
+    [ -r "$alt" ] && tpath="$alt"
   fi
-  if [ "$first_ts" -gt 0 ]; then
-    SESSION_FIRST_TS="$first_ts"
+  [ -n "$tpath" ] || return 0
+
+  local -a cids=("$CONV_ID") paths=("$tpath")
+  local sub_re='^(.+)/([A-Za-z0-9._-]+)/\.system_generated/logs/transcript\.jsonl$'
+  if { visible Tokens || visible Cache; } && [[ "$tpath" =~ $sub_re ]]; then
+    local brain_root="${BASH_REMATCH[1]}"
+    local -a queue=("${BASH_REMATCH[2]}")
+    local qi=0 cur="" sdir="" jf="" sid="" stp=""
+    while [ "$qi" -lt "${#queue[@]}" ]; do
+      cur="${queue[qi]}"
+      qi=$((qi + 1))
+      sdir="${brain_root}/${cur}/.system_generated/subagents"
+      [ -d "$sdir" ] || continue
+      for jf in "$sdir"/*.json; do
+        [ -e "$jf" ] || break
+        sid="${jf##*/}"
+        sid="${sid%.json}"
+        [[ "$sid" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+        [[ " ${queue[*]} " != *" $sid "* ]] || continue
+        queue+=("$sid")
+        stp="${brain_root}/${sid}/.system_generated/logs/transcript.jsonl"
+        if [ -r "$stp" ]; then
+          cids+=("$sid")
+          paths+=("$stp")
+        fi
+      done
+    done
   fi
-  SESSION_TOK_SPEED="$tok_speed"
-  if [ "$s_in" != '--' ]; then
-    DISP_IN="$s_in"
-    DISP_OUT="$s_out"
+
+  local -a mtimes=() sizes=()
+  local _m="" _s="" batch_ok=0
+  while IFS=' ' read -r _m _s; do
+    mtimes+=("$_m")
+    sizes+=("$_s")
+  done < <(stat_meta "${paths[@]}")
+  [ "${#mtimes[@]}" -eq "${#paths[@]}" ] && batch_ok=1
+
+  local i=0 has_usage=0 sum_in=0 sum_out=0 sum_cr=0
+  local T_IN="--" T_OUT="--" T_CR="--" T_FIRST_TS=0 T_SPEED=0
+  for ((i = 0; i < ${#paths[@]}; i++)); do
+    _m="" _s=""
+    if [ "$batch_ok" -eq 1 ]; then
+      _m="${mtimes[i]}"
+      _s="${sizes[i]}"
+    fi
+    read_transcript "${cids[i]}" "${paths[i]}" "$_m" "$_s"
+    if [ "$i" -eq 0 ]; then
+      if [ "$T_FIRST_TS" -gt 0 ]; then SESSION_FIRST_TS="$T_FIRST_TS"; fi
+      SESSION_TOK_SPEED="$T_SPEED"
+    fi
+    [ "$T_IN" != '--' ] || continue
+    has_usage=1
+    sum_in=$((sum_in + T_IN))
+    sum_out=$((sum_out + T_OUT))
+    if [ "$sum_cr" != '--' ] && [ "$T_CR" != '--' ]; then
+      sum_cr=$((sum_cr + T_CR))
+    else
+      sum_cr="--"
+    fi
+  done
+
+  if [ "$has_usage" -eq 1 ]; then
+    DISP_IN="$sum_in"
+    DISP_OUT="$sum_out"
+    if [ "$sum_in" -gt 0 ] && [ "$sum_cr" != '--' ]; then
+      local _ct=$(( (sum_cr * 2000 + sum_in) / (2 * sum_in) ))
+      SESSION_CACHE_PCT="$((_ct / 10)).$((_ct % 10))"
+    fi
   fi
 }
 

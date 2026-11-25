@@ -195,6 +195,68 @@ PLAIN=$(strip_ansi "$OUT")
 assert_contains "rewind keeps consumed tokens" "$PLAIN" "tok 5k (2k↑ 3k↓)"
 assert_contains "rewind strict step_index drop resets turn speed" "$PLAIN" "│ 50 tok/s │"
 
+# Subagents (including nested and cyclic links) aggregate into tokens & weighted cache, while turn speed stays main-only.
+BRAIN_TMP="${TMP_DIR}/brain"
+P_ID="parent-conv-1" S1_ID="sub-conv-1" S2_ID="sub-conv-2"
+mkdir -p \
+  "${BRAIN_TMP}/${P_ID}/.system_generated/logs" \
+  "${BRAIN_TMP}/${P_ID}/.system_generated/subagents" \
+  "${BRAIN_TMP}/${S1_ID}/.system_generated/logs" \
+  "${BRAIN_TMP}/${S1_ID}/.system_generated/subagents" \
+  "${BRAIN_TMP}/${S2_ID}/.system_generated/logs"
+P_TRANS="${BRAIN_TMP}/${P_ID}/.system_generated/logs/transcript.jsonl"
+S1_TRANS="${BRAIN_TMP}/${S1_ID}/.system_generated/logs/transcript.jsonl"
+S2_TRANS="${BRAIN_TMP}/${S2_ID}/.system_generated/logs/transcript.jsonl"
+printf '{}\n' > "${BRAIN_TMP}/${P_ID}/.system_generated/subagents/${S1_ID}.json"
+printf '{}\n' > "${BRAIN_TMP}/${S1_ID}/.system_generated/subagents/${S2_ID}.json"
+printf '{}\n' > "${BRAIN_TMP}/${S1_ID}/.system_generated/subagents/${P_ID}.json"
+cat > "$P_TRANS" <<EOF
+{"step_index":0,"type":"USER_INPUT","created_at":"$(iso_at $((NOW_S - 100)))","content":"parent"}
+{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"$(iso_at $((NOW_S - 20)))","input_tokens":10000,"cache_read_tokens":90000,"output_tokens":1000}
+EOF
+cat > "$S1_TRANS" <<EOF
+{"step_index":0,"type":"SYSTEM_MESSAGE","created_at":"$(iso_at $((NOW_S - 80)))","content":"task1"}
+{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"$(iso_at $((NOW_S - 80)))","input_tokens":50000,"cache_read_tokens":50000,"output_tokens":2000}
+EOF
+cat > "$S2_TRANS" <<EOF
+{"step_index":0,"type":"SYSTEM_MESSAGE","created_at":"$(iso_at $((NOW_S - 60)))","content":"nested"}
+{"step_index":1,"type":"CHECKPOINT","created_at":"$(iso_at $((NOW_S - 60)))","input_tokens":20000,"cache_read_tokens":80000,"output_tokens":1000}
+EOF
+touch_at "$NOW_S" "$P_TRANS"
+touch_at "$NOW_S" "$S1_TRANS"
+touch_at "$NOW_S" "$S2_TRANS"
+SUB_PAYLOAD="{\"cwd\":\"/tmp\",\"conversation_id\":\"${P_ID}\",\"transcript_path\":\"${P_TRANS}\",\"cost\":{\"total_usd\":1.23,\"subagent_usd\":0.45,\"estimated\":true},\"terminal_width\":120}"
+for run in 1 2; do
+  OUT=$("$STATUSLINE" <<< "$SUB_PAYLOAD")
+  PLAIN=$(strip_ansi "$OUT")
+  assert_contains "wide subagent token total ($run)" "$PLAIN" "tok 304k (300k↑ 4k↓)"
+  assert_contains "wide subagent weighted cache ($run)" "$PLAIN" "cache 73.3%"
+  assert_contains "wide turn speed remains main-only ($run)" "$PLAIN" "│ 50 tok/s │"
+  assert_contains "wide cost shows unified total ($run)" "$PLAIN" '~$1.23'
+  assert_not_contains "wide output has no sub suffix ($run)" "$PLAIN" "(sub "
+done
+[ -r "${XDG_CACHE_HOME}/statusline-hud/transcript/${S1_ID}.cache" ] && [ -r "${XDG_CACHE_HOME}/statusline-hud/transcript/${S2_ID}.cache" ] && pass || fail "per-subagent cache files should be written"
+OUT=$("$STATUSLINE" <<< "{\"cwd\":\"/tmp\",\"conversation_id\":\"${P_ID}\",\"transcript_path\":\"${P_TRANS}\",\"cost\":{\"total_usd\":1.23,\"subagent_usd\":0.45,\"estimated\":true},\"terminal_width\":80}")
+PLAIN=$(strip_ansi "$OUT")
+assert_contains "narrow subagent token shows unified total" "$PLAIN" "│ tok 304k │"
+assert_contains "narrow cost keeps total" "$PLAIN" '~$1.23'
+
+# Updating a subagent transcript invalidates only that subagent's cache automatically.
+printf '{"step_index":2,"type":"PLANNER_RESPONSE","created_at":"%s","input_tokens":100000,"cache_read_tokens":0,"output_tokens":0}\n' "$(iso_at $((NOW_S + 1)))" >> "$S2_TRANS"
+touch_at "$((NOW_S + 1))" "$S2_TRANS"
+OUT=$("$STATUSLINE" <<< "$SUB_PAYLOAD")
+PLAIN=$(strip_ansi "$OUT")
+assert_contains "updated subagent invalidates sub cache tokens" "$PLAIN" "tok 404k (400k↑ 4k↓)"
+assert_contains "updated subagent invalidates sub cache pct" "$PLAIN" "cache 55.0%"
+
+# Hiding Tokens and Cache skips subagent scan.
+CFG_NOSUB="${TMP_DIR}/cfg-nosub"
+CACHE_NOSUB="${TMP_DIR}/cache-nosub"
+mkdir -p "${CFG_NOSUB}/statusline-hud"
+printf '%s\n' '{"showTokens":false,"showCache":false}' > "${CFG_NOSUB}/statusline-hud/config.json"
+OUT=$(XDG_CONFIG_HOME="$CFG_NOSUB" XDG_CACHE_HOME="$CACHE_NOSUB" "$STATUSLINE" <<< "{\"cwd\":\"/tmp\",\"conversation_id\":\"${P_ID}\",\"transcript_path\":\"${P_TRANS}\",\"terminal_width\":120}")
+[ ! -e "${CACHE_NOSUB}/statusline-hud/transcript/${S1_ID}.cache" ] && [ ! -e "${CACHE_NOSUB}/statusline-hud/transcript/${S2_ID}.cache" ] && pass || fail "hidden Tokens+Cache must skip subagent scan"
+
 # Confirmation takes priority over tool use; usage falls back to the payload.
 OUT=$("$STATUSLINE" <<< '{
   "cwd":"/tmp","agent_state":"tool_use","tool_confirmation_pending":true,"pending_input_count":2,
