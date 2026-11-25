@@ -185,7 +185,7 @@ cmd_doctor() {
       sl_cmd_exp=$(expand_tilde "$sl_cmd")
       if [ -z "$sl_cmd" ]; then
         printf '  status:   statusLine.command is empty\n'
-      elif [ -n "$script_path" ] && [ "$sl_cmd_exp" = "$script_path" ]; then
+      elif [ -n "$script_path" ] && [ "$sl_cmd_exp" -ef "$script_path" ]; then
         if [ "$sl_enabled" = "false" ]; then
           activation="HUD configured but disabled"
           printf '  status:   HUD configured but disabled -> %s\n' "$sl_cmd"

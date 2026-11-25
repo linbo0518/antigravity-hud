@@ -477,6 +477,14 @@ assert_contains "disabled HUD summary states disabled" "$DOC_DISABLED" "HUD conf
 assert_not_contains "disabled HUD is not active" "$DOC_DISABLED" "ACTIVE ->"
 assert_not_contains "disabled HUD omits activate command" "$DOC_DISABLED" "activate: /statusline"
 
+# Symlinked statusLine.command pointing to the same script is recognized as ACTIVE
+SYM_PLUG="${TMP_DIR}/symlinked-plugin"
+ln -s "$ROOT_DIR" "$SYM_PLUG"
+printf '{"statusLine":{"type":"command","command":"%s/scripts/statusline.sh","enabled":true}}\n' "$SYM_PLUG" > "$TMP_DIR/symlink-settings.json"
+DOC_SYM=$(HUD_SETTINGS_FILE="$TMP_DIR/symlink-settings.json" "$HUD_CTL" doctor)
+assert_contains "symlinked script recognized as ACTIVE" "$DOC_SYM" "ACTIVE ->"
+assert_contains "symlinked script summary reports enabled" "$DOC_SYM" "Environment ready; HUD enabled"
+
 # UTF-8 BOM in settings.json and config.json handled cleanly by hud.sh
 BOM_CFG_HOME="${TMP_DIR}/hud-bom-cfg"
 mkdir -p "${BOM_CFG_HOME}/statusline-hud"
