@@ -308,6 +308,20 @@ if command -v git >/dev/null 2>&1; then
   [ ! -d "${GIT_CACHE_MISSING}/statusline-hud/git" ] && pass || fail "missing cwd must not write git cache"
 fi
 
+# UTF-8 BOM in config.json is accepted by statusline.sh
+CFG_BOM="${TMP_DIR}/cfg-bom"
+mkdir -p "${CFG_BOM}/statusline-hud"
+printf '\xef\xbb\xbf{"showTitle":false,"showCost":false}\n' > "${CFG_BOM}/statusline-hud/config.json"
+OUT=$(XDG_CONFIG_HOME="$CFG_BOM" "$STATUSLINE" <<< '{
+  "cwd":"/tmp",
+  "conversation_title":"Hidden by BOM config",
+  "cost":{"total_usd":1.25},
+  "terminal_width":120
+}')
+PLAIN=$(strip_ansi "$OUT")
+assert_not_contains "BOM config hides title" "$PLAIN" "Hidden by BOM config"
+assert_not_contains "BOM config hides cost" "$PLAIN" '$1.25'
+
 # Broken config.json gracefully falls back to defaults without failing
 CFG_BAD="${TMP_DIR}/cfg-bad"
 mkdir -p "${CFG_BAD}/statusline-hud"
@@ -462,6 +476,20 @@ assert_contains "disabled HUD has recovery command" "$DOC_DISABLED" "/statusline
 assert_contains "disabled HUD summary states disabled" "$DOC_DISABLED" "HUD configured but disabled"
 assert_not_contains "disabled HUD is not active" "$DOC_DISABLED" "ACTIVE ->"
 assert_not_contains "disabled HUD omits activate command" "$DOC_DISABLED" "activate: /statusline"
+
+# UTF-8 BOM in settings.json and config.json handled cleanly by hud.sh
+BOM_CFG_HOME="${TMP_DIR}/hud-bom-cfg"
+mkdir -p "${BOM_CFG_HOME}/statusline-hud"
+printf '\xef\xbb\xbf{"showCost":false}\n' > "${BOM_CFG_HOME}/statusline-hud/config.json"
+printf '\xef\xbb\xbf{"model":"Gemini 4","statusLine":{"type":"command","command":"%s","enabled":true}}\n' "$STATUSLINE" > "$TMP_DIR/bom-settings.json"
+DOC_BOM=$(XDG_CONFIG_HOME="$BOM_CFG_HOME" HUD_SETTINGS_FILE="$TMP_DIR/bom-settings.json" "$HUD_CTL" doctor)
+assert_contains "doctor parses BOM settings.json as ACTIVE" "$DOC_BOM" "ACTIVE ->"
+assert_contains "doctor parses BOM config.json as valid" "$DOC_BOM" "file:     OK (valid)"
+assert_contains "doctor prints effective BOM config" "$DOC_BOM" "showCost        = [OFF]"
+XDG_CONFIG_HOME="$BOM_CFG_HOME" "$HUD_CTL" set showTitle=false >/dev/null
+assert_eq "set preserves keys from BOM config.json" "$(jq -c . "${BOM_CFG_HOME}/statusline-hud/config.json")" '{"showCost":false,"showTitle":false}'
+HUD_SETTINGS_FILE="$TMP_DIR/bom-settings.json" "$HUD_CTL" apply-settings >/dev/null
+assert_eq "apply-settings preserves keys from BOM settings.json" "$(jq -r '.model' "$TMP_DIR/bom-settings.json")" "Gemini 4"
 
 printf 'Tests finished: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

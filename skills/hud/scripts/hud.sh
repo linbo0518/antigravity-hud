@@ -10,6 +10,11 @@ SETTINGS_FILE="${HUD_SETTINGS_FILE:-${HOME:-/tmp}/.gemini/antigravity-cli/settin
 
 CONFIG_DEFAULTS='{"showMode":true,"showModel":true,"showContext":true,"showPath":true,"showGit":true,"showGeminiQuota":true,"show3pQuota":true,"showArtifacts":true,"showSubagents":true,"showTasks":true,"showSandbox":true,"showTokens":true,"showCache":true,"showDuration":true,"showCost":true,"showTitle":true}'
 
+JQ_JSON_LIB='
+  def strip_bom: ltrimstr("\ufeff");
+  def parse_object: strip_bom | fromjson | if type == "object" then . else error("not object") end;
+'
+
 PREVIEW_PAYLOAD='{"cwd":"/home/user/projects/statusline-hud","conversation_title":"Refactor statusline layout","agent_state":"working","cycle_mode":"plan","model":{"display_name":"Gemini 4 Neon (XHigh)"},"vcs":{"type":"git","branch":"main","dirty":true},"context_window":{"used_percentage":18.4,"total_input_tokens":261000,"total_output_tokens":7000,"current_usage":{"input_tokens":30000,"cache_read_input_tokens":98000,"cache_creation_input_tokens":0}},"quota":{"gemini-5h":{"remaining_fraction":0.82,"reset_in_seconds":3600},"gemini-weekly":{"remaining_fraction":0.93,"reset_in_seconds":560580},"3p-5h":{"remaining_fraction":0.70,"reset_in_seconds":7200},"3p-weekly":{"remaining_fraction":0.85,"reset_in_seconds":400000}},"artifact_count":2,"subagents":[{"name":"a","status":"running"},{"name":"b","status":"completed"}],"task_count":1,"sandbox":{"enabled":false},"cost":{"total_usd":0.42,"estimated":true},"terminal_width":120}'
 
 jq_install_hint() {
@@ -69,11 +74,10 @@ resolve_statusline_script() {
 read_json_object_or_fail() {
   local file="$1" hint="$2"
   [ -e "$file" ] || { printf '{}'; return 0; }
-  if ! jq -se 'length == 1 and (.[0] | type) == "object"' "$file" >/dev/null 2>&1; then
+  if ! jq -n --rawfile raw "$file" "${JQ_JSON_LIB}"'$raw | parse_object' 2>/dev/null; then
     printf 'Error: %s is not a valid JSON object%s\n' "$(to_tilde_path "$file")" "$hint" >&2
     exit 1
   fi
-  cat "$file"
 }
 
 atomic_write_file() {
@@ -99,10 +103,10 @@ print_effective_config() {
 
   local cfg=(--arg raw '{}')
   if [ -r "$CONFIG_FILE" ]; then cfg=(--rawfile raw "$CONFIG_FILE"); fi
-  jq -nr "${cfg[@]}" --argjson defaults "$CONFIG_DEFAULTS" '
+  jq -nr "${cfg[@]}" --argjson defaults "$CONFIG_DEFAULTS" "${JQ_JSON_LIB}"'
     def switches: if type == "object" then with_entries(select(.value | type == "boolean")) else {} end;
     def mark: if . then "[ON]" else "[OFF]" end;
-    (($raw | fromjson? | objects) // {}) as $c
+    (($raw | strip_bom | fromjson? | objects) // {}) as $c
     | ($defaults + ($c | switches)) as $base
     | ($c.narrow | switches) as $narrow
     | $defaults | keys_unsorted[] as $k
@@ -161,14 +165,14 @@ cmd_doctor() {
       && IFS= read -r -d '' sl_enabled \
       && IFS= read -r -d '' sl_stack
     } < <(
-      jq -sj '
-        if length != 1 or (.[0] | type) != "object" then error("not object") else .[0] end
+      jq -nj --rawfile raw "$SETTINGS_FILE" "${JQ_JSON_LIB}"'
+        $raw | parse_object
         | (.statusLine | type) as $t
         | ($t + "\u0000"
           + (if $t == "object" then (.statusLine.command // "" | tostring) else "" end) + "\u0000"
           + (if $t == "object" and (.statusLine | has("enabled")) then (.statusLine.enabled | tostring) else "true" end) + "\u0000"
           + (if $t == "object" and (.statusLine | has("stack_with_default")) then (.statusLine.stack_with_default | tostring) else "false" end) + "\u0000")
-      ' "$SETTINGS_FILE" 2>/dev/null
+      ' 2>/dev/null
     ); then
       printf '  status:   INVALID JSON\n'
       issues=$((issues + 1))
@@ -214,19 +218,19 @@ cmd_doctor() {
     printf '  file:     exists (install jq to validate)\n'
   else
     local warnings=""
-    if ! warnings=$(jq -sr --argjson defaults "$CONFIG_DEFAULTS" '
+    if ! warnings=$(jq -nr --rawfile raw "$CONFIG_FILE" --argjson defaults "$CONFIG_DEFAULTS" "${JQ_JSON_LIB}"'
       def check($prefix):
         to_entries[] | .key as $k
         | if ($defaults | has($k) | not) then "unknown key \"\($prefix)\($k)\" (ignored)"
           elif (.value | type) != "boolean" then "invalid type for \"\($prefix)\($k)\" (expected boolean)"
           else empty end;
-      if length != 1 or (.[0] | type) != "object" then error("not object") else .[0] end
+      $raw | parse_object
       | (del(.narrow) | check("")),
         (if has("narrow") then
            if (.narrow | type) == "object" then .narrow | check("narrow.")
            else "invalid type for \"narrow\" (expected object)" end
          else empty end)
-    ' "$CONFIG_FILE" 2>/dev/null); then
+    ' 2>/dev/null); then
       printf '  file:     INVALID JSON (runtime falls back to defaults; fix or run reset)\n'
       issues=$((issues + 1))
     elif [ -n "$warnings" ]; then

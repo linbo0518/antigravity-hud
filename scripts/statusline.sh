@@ -97,7 +97,7 @@ while IFS= read -r -d '' _k && IFS= read -r -d '' _v; do
   printf -v "$_k" '%s' "$_v"
 done < <(
   jq -j --arg modules "${row1[*]} ${row2[*]} ${row3[*]}" "${JQ_CFG_ARGS[@]}" "${JQ_TEXT_LIB}"'
-    (($cfg_raw | fromjson? | objects) // {}) as $cfg |
+    (($cfg_raw | ltrimstr("\ufeff") | fromjson? | objects) // {}) as $cfg |
     def kv($k; $v): "\($k)\u0000\($v)\u0000";
     def switches: if type == "object" then with_entries(select(.value | type == "boolean")) else {} end;
 
