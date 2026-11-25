@@ -71,8 +71,25 @@ resolve_statusline_script() {
   return 1
 }
 
+file_inaccessible() {
+  local file="$1" err
+  if [ -e "$file" ]; then
+    [ ! -r "$file" ]
+    return
+  fi
+  err=$(LC_ALL=C; exec 2>&1; : < "$file") || true
+  case "$err" in
+    *": Permission denied"|*": Operation not permitted") return 0 ;;
+  esac
+  return 1
+}
+
 read_json_object_or_fail() {
   local file="$1" hint="$2"
+  if file_inaccessible "$file"; then
+    printf 'Error: %s is inaccessible (permission denied or sandboxed)\n' "$(to_tilde_path "$file")" >&2
+    exit 1
+  fi
   [ -e "$file" ] || { printf '{}'; return 0; }
   if ! jq -n --rawfile raw "$file" "${JQ_JSON_LIB}"'$raw | parse_object' 2>/dev/null; then
     printf 'Error: %s is not a valid JSON object%s\n' "$(to_tilde_path "$file")" "$hint" >&2
@@ -96,6 +113,10 @@ atomic_write_file() {
 }
 
 print_effective_config() {
+  if file_inaccessible "$CONFIG_FILE"; then
+    printf '  (config inaccessible: permission denied or sandboxed)\n'
+    return 0
+  fi
   if ! command -v jq >/dev/null 2>&1; then
     printf '  (install jq to inspect effective config: %s)\n' "$(jq_install_hint)"
     return 0
@@ -150,11 +171,12 @@ cmd_doctor() {
   fi
 
   printf '\n=== Antigravity CLI Settings (%s) ===\n' "$(to_tilde_path "$SETTINGS_FILE")"
-  if [ ! -e "$SETTINGS_FILE" ]; then
-    printf '  status:   not found (statusLine not configured yet)\n'
-  elif [ ! -r "$SETTINGS_FILE" ]; then
-    printf '  status:   unreadable (permission denied)\n'
+  if file_inaccessible "$SETTINGS_FILE"; then
+    activation="HUD status unknown (settings inaccessible)"
+    printf '  status:   inaccessible (permission denied or sandboxed)\n'
     issues=$((issues + 1))
+  elif [ ! -e "$SETTINGS_FILE" ]; then
+    printf '  status:   not found (statusLine not configured yet)\n'
   elif [ "$has_jq" -eq 0 ]; then
     printf '  status:   exists (install jq to inspect JSON)\n'
   else
@@ -209,11 +231,11 @@ cmd_doctor() {
   fi
 
   printf '\n=== HUD Config (%s) ===\n' "$(to_tilde_path "$CONFIG_FILE")"
-  if [ ! -e "$CONFIG_FILE" ]; then
-    printf '  file:     not present (using defaults)\n'
-  elif [ ! -r "$CONFIG_FILE" ]; then
-    printf '  file:     unreadable\n'
+  if file_inaccessible "$CONFIG_FILE"; then
+    printf '  file:     inaccessible (permission denied or sandboxed)\n'
     issues=$((issues + 1))
+  elif [ ! -e "$CONFIG_FILE" ]; then
+    printf '  file:     not present (using defaults)\n'
   elif [ "$has_jq" -eq 0 ]; then
     printf '  file:     exists (install jq to validate)\n'
   else
@@ -341,7 +363,10 @@ cmd_update() {
 }
 
 cmd_reset() {
-  if [ -e "$CONFIG_FILE" ]; then
+  if file_inaccessible "$CONFIG_FILE"; then
+    printf 'Error: %s is inaccessible (permission denied or sandboxed)\n' "$(to_tilde_path "$CONFIG_FILE")" >&2
+    exit 1
+  elif [ -e "$CONFIG_FILE" ]; then
     rm -f "$CONFIG_FILE"
     printf 'Removed %s (restored defaults)\n' "$(to_tilde_path "$CONFIG_FILE")"
   else

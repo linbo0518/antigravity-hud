@@ -51,6 +51,8 @@ Location: `${XDG_CONFIG_HOME:-~/.config}/statusline-hud/config.json` (hot-reload
 
 Run `<skill-dir>/scripts/hud.sh doctor` first so you have ground-truth status for `jq`, script permissions, `settings.json`, `config.json` validity, and every effective setting.
 
+Note: In sandboxed modes (including default `Auto` on `agy >= 1.5.10` and `--sandbox`), reading or writing `~/.config/statusline-hud/config.json` and `~/.gemini/antigravity-cli/settings.json` may be blocked or hidden even while `statusline.sh` itself reads them normally on the host. Whenever a `hud.sh` command is blocked, `doctor` reports `inaccessible`, or `doctor` shows `not found` / `not present` despite the user expecting existing config, explain that terminal sandbox isolation may be hiding host files and output the exact ready-to-run `<skill-dir>/scripts/hud.sh ...` command for the user to paste.
+
 ### Step 2: Handle user intent
 
 #### A. Open-ended `/hud` or "help me configure HUD"
@@ -72,11 +74,11 @@ Run `<skill-dir>/scripts/hud.sh doctor` first so you have ground-truth status fo
 
 #### C. Modify config via natural language (e.g. "hide/show cost in split panes")
 1. Map hide/show requests to `set` (`<skill-dir>/scripts/hud.sh set narrow.showCost=false` or `set narrow.showCost=true`). Use ordinary keys for all widths unless the user specifies a narrow override; use `toggle` for an explicit flip, and `unset` to remove overrides and restore defaults or narrow `inherit` (e.g. `unset narrow.showCost` or `unset narrow`).
-2. Because `~/.config/statusline-hud/config.json` is outside the workspace, writing may prompt for approval or be blocked in sandboxed modes. If blocked, output the exact ready-to-run `<skill-dir>/scripts/hud.sh ...` command for the user to paste.
+2. Because `~/.config/statusline-hud/config.json` is outside the workspace, follow the sandbox fallback in Step 1 if blocked.
 3. Re-run `<skill-dir>/scripts/hud.sh preview <width>` (80 for narrow changes, otherwise 120) to show the updated layout and confirm it hot-reloads automatically without restarting `agy`.
 
 #### D. Validate, Debug & Troubleshoot (`/hud check`, `/hud doctor`, "statusline not working")
-1. Present all findings from `scripts/hud.sh doctor` (missing `jq`, non-executable script, `settings.json` mismatch / `enabled: false` / `stack_with_default: true`, invalid JSON or unknown keys/types in `config.json`, failed smoke test).
+1. Present all findings from `scripts/hud.sh doctor` (missing `jq`, non-executable script, `settings.json` mismatch / `enabled: false` / `stack_with_default: true` / `inaccessible`, invalid JSON or unknown keys/types in `config.json`, failed smoke test).
 2. Fix config issues after confirmation: `set` fixes wrong boolean types, `unset narrow` fixes a non-object `narrow`, and `reset` recovers invalid JSON or clears legacy unknown keys.
 3. Remind the user that Antigravity CLI disables a statusline after 30 consecutive failures (`⚠ Statusline disabled after 30 consecutive failures.`), recoverable via `/statusline enable` (or `/statusline delete` to revert).
 4. For deeper debugging:

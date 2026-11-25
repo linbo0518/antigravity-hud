@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATUSLINE="${ROOT_DIR}/scripts/statusline.sh"
 
 TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+trap 'chmod -R u+rwx "$TMP_DIR" 2>/dev/null || true; rm -rf "$TMP_DIR"' EXIT
 
 export XDG_CACHE_HOME="${TMP_DIR}/cache"
 export XDG_CONFIG_HOME="${TMP_DIR}/empty-config"
@@ -498,6 +498,53 @@ XDG_CONFIG_HOME="$BOM_CFG_HOME" "$HUD_CTL" set showTitle=false >/dev/null
 assert_eq "set preserves keys from BOM config.json" "$(jq -c . "${BOM_CFG_HOME}/statusline-hud/config.json")" '{"showCost":false,"showTitle":false}'
 HUD_SETTINGS_FILE="$TMP_DIR/bom-settings.json" "$HUD_CTL" apply-settings >/dev/null
 assert_eq "apply-settings preserves keys from BOM settings.json" "$(jq -r '.model' "$TMP_DIR/bom-settings.json")" "Gemini 4"
+
+# Inaccessible parent directories (sandbox/permission denied) are flagged and never treated as empty {}
+if [ "$(id -u)" -ne 0 ]; then
+  LOCKED_CFG="${TMP_DIR}/locked-cfg"
+  LOCKED_SET="${TMP_DIR}/locked-set"
+  mkdir -p "${LOCKED_CFG}/statusline-hud" "$LOCKED_SET"
+  printf '{"showCost":false}\n' > "${LOCKED_CFG}/statusline-hud/config.json"
+  printf '{"model":"keep"}\n' > "${LOCKED_SET}/settings.json"
+  chmod 000 "$LOCKED_CFG" "$LOCKED_SET"
+
+  DOC_LOCKED=$(XDG_CONFIG_HOME="$LOCKED_CFG" HUD_SETTINGS_FILE="${LOCKED_SET}/settings.json" "$HUD_CTL" doctor)
+  assert_contains "doctor flags inaccessible settings dir" "$DOC_LOCKED" "status:   inaccessible (permission denied or sandboxed)"
+  assert_contains "doctor flags inaccessible config dir" "$DOC_LOCKED" "file:     inaccessible (permission denied or sandboxed)"
+  assert_contains "doctor flags inaccessible effective config" "$DOC_LOCKED" "(config inaccessible: permission denied or sandboxed)"
+  assert_contains "doctor summary avoids false not-enabled claim" "$DOC_LOCKED" "HUD status unknown (settings inaccessible)"
+  assert_not_contains "doctor omits activate hint when settings inaccessible" "$DOC_LOCKED" "activate: /statusline"
+  if XDG_CONFIG_HOME="$LOCKED_CFG" "$HUD_CTL" set showTitle=false >/dev/null 2>&1; then
+    fail "set must fail when config dir is inaccessible"
+  else
+    pass
+  fi
+  if XDG_CONFIG_HOME="$LOCKED_CFG" "$HUD_CTL" reset >/dev/null 2>&1; then
+    fail "reset must fail when config dir is inaccessible"
+  else
+    pass
+  fi
+  if HUD_SETTINGS_FILE="${LOCKED_SET}/settings.json" "$HUD_CTL" apply-settings >/dev/null 2>&1; then
+    fail "apply-settings must fail when settings dir is inaccessible"
+  else
+    pass
+  fi
+  chmod 700 "$LOCKED_CFG" "$LOCKED_SET"
+  assert_eq "inaccessible config untouched after failed writes" "$(jq -c . "${LOCKED_CFG}/statusline-hud/config.json")" '{"showCost":false}'
+  assert_eq "inaccessible settings untouched after failed apply" "$(jq -c . "${LOCKED_SET}/settings.json")" '{"model":"keep"}'
+
+  # Deep locked ancestor (3+ levels) is detected, while execute-only (0111) parent with missing file is not flagged
+  DEEP_LOCK="${TMP_DIR}/deep-lock"
+  EXEC_ONLY="${TMP_DIR}/exec-only"
+  mkdir -p "${DEEP_LOCK}/sub/cfg/statusline-hud" "${EXEC_ONLY}/statusline-hud"
+  chmod 000 "$DEEP_LOCK"
+  chmod 111 "$EXEC_ONLY"
+  DOC_DEEP=$(XDG_CONFIG_HOME="${DEEP_LOCK}/sub/cfg" HUD_SETTINGS_FILE="$TMP_DIR/no-settings.json" "$HUD_CTL" doctor)
+  assert_contains "doctor flags 3+ level inaccessible ancestor" "$DOC_DEEP" "file:     inaccessible (permission denied or sandboxed)"
+  DOC_EXEC=$(XDG_CONFIG_HOME="$EXEC_ONLY" HUD_SETTINGS_FILE="$TMP_DIR/no-settings.json" "$HUD_CTL" doctor)
+  assert_contains "execute-only parent with missing config is not falsely flagged" "$DOC_EXEC" "file:     not present (using defaults)"
+  chmod 700 "$DEEP_LOCK" "$EXEC_ONLY"
+fi
 
 printf 'Tests finished: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
