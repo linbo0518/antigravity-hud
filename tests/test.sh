@@ -166,6 +166,20 @@ touch_at "$NOW_S" "$WAIT_TRANS"
 OUT=$("$STATUSLINE" <<< "{\"cwd\":\"/tmp\",\"conversation_id\":\"wait-conv\",\"transcript_path\":\"${WAIT_TRANS}\",\"terminal_width\":120}")
 assert_contains "trailing SYSTEM_MESSAGE after ended turn shows 0 tok/s" "$(strip_ansi "$OUT")" "│ 0 tok/s │"
 
+# CHECKPOINT usage counts toward session tokens & cache without polluting turn speed.
+CP_TRANS="${TMP_DIR}/checkpoint-usage.jsonl"
+cat > "$CP_TRANS" <<EOF
+{"step_index":0,"type":"USER_INPUT","created_at":"$(iso_at $((NOW_S - 200)))","content":"compact"}
+{"step_index":1,"type":"CHECKPOINT","created_at":"$(iso_at $((NOW_S - 200)))","input_tokens":10000,"cache_read_tokens":90000,"output_tokens":4000}
+{"step_index":2,"type":"PLANNER_RESPONSE","created_at":"$(iso_at $((NOW_S - 20)))","input_tokens":10000,"cache_read_tokens":0,"output_tokens":1000}
+EOF
+touch_at "$NOW_S" "$CP_TRANS"
+OUT=$("$STATUSLINE" <<< "{\"cwd\":\"/tmp\",\"conversation_id\":\"cp-conv\",\"transcript_path\":\"${CP_TRANS}\",\"terminal_width\":120}")
+PLAIN=$(strip_ansi "$OUT")
+assert_contains "checkpoint tokens counted in session total" "$PLAIN" "tok 115k (110k↑ 5k↓)"
+assert_contains "checkpoint cache counted in session cache" "$PLAIN" "cache 81.8%"
+assert_contains "checkpoint excluded from turn speed" "$PLAIN" "│ 50 tok/s │"
+
 # Rewind (strict step_index drop) during an unfinished turn resets speed even on SYSTEM_MESSAGE wake-up, while retaining consumed tokens.
 RW_TRANS="${TMP_DIR}/rewind-mid-turn.jsonl"
 cat > "$RW_TRANS" <<EOF
