@@ -357,6 +357,7 @@ parse_git_status() {
   if [ -n "$VCS_TYPE" ] && [ "$VCS_TYPE" != "git" ]; then
     return 0
   fi
+  [ -d "$cwd" ] || return 0
   has_git_dir "$cwd" || return 0
 
   local gkey="" gdir="${CACHE_ROOT}/git" gfile=""

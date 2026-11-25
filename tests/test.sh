@@ -298,6 +298,14 @@ if command -v git >/dev/null 2>&1; then
   # Synthetic JSON dirty fallback without local git repo keeps star on wide screen
   OUT=$("$STATUSLINE" <<< '{"cwd":"/tmp","vcs":{"type":"git","branch":"main","dirty":true},"terminal_width":120}')
   assert_contains "synthetic dirty fallback keeps star" "$(strip_ansi "$OUT")" "main*"
+
+  # Non-existent cwd inside a git repo does not walk ancestor .git or write git cache
+  GIT_CACHE_MISSING="${TMP_DIR}/git-cache-missing"
+  OUT=$(XDG_CACHE_HOME="$GIT_CACHE_MISSING" "$STATUSLINE" <<< "{\"cwd\":\"${GIT_REPO}/does-not-exist/sub\",\"vcs\":{\"type\":\"git\",\"branch\":\"remote-main\",\"dirty\":true},\"terminal_width\":120}")
+  PLAIN=$(strip_ansi "$OUT")
+  assert_contains "missing cwd keeps JSON vcs fallback" "$PLAIN" "remote-main*"
+  assert_not_contains "missing cwd does not inspect ancestor git repo" "$PLAIN" "[+!"
+  [ ! -d "${GIT_CACHE_MISSING}/statusline-hud/git" ] && pass || fail "missing cwd must not write git cache"
 fi
 
 # Broken config.json gracefully falls back to defaults without failing
