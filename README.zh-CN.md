@@ -52,7 +52,7 @@
 
 - **Git**：`[...]` 仓库状态（`=` 冲突、`+` 已暂存、`!` 未暂存修改、`✘` 删除、`»` 重命名、`?` 未跟踪、`$` stash、`↑N`/`↓N` 领先/落后提交）与 `(+N −M)` 已跟踪增删行数；窄屏有改动时收敛为 `*`。
 - **配额**：已用百分比（绿 `<60%`、黄 `60–89%`、红 `>=90%`）+ 距重置时间；仅返回剩余数量时显示 `<N> left`。
-- **Token**：`token <总量> (<输入>↑ <输出>↓)`，按整场会话累计。
+- **Token**：`tok <总量> (<输入>↑ <输出>↓)` 按整场会话累计，其后 `<N> tok/s` 为本轮端到端输出速率。
 
 ## 卸载
 
@@ -77,9 +77,9 @@ rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/statusline-hud" "${XDG_CACHE_HOME:-$HO
 | --- | --- |
 | 1 | `showMode`, `showModel`, `showContext`, `showPath`, `showGit` |
 | 2 | `showGeminiQuota`, `show3pQuota` |
-| 3 | `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showCache`, `showDuration`, `showCost`, `showTitle` |
+| 3 | `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showTokenSpeed`, `showCache`, `showDuration`, `showCost`, `showTitle` |
 
-核心状态始终在第一行开头。所有开关均为布尔值且默认全部开启；计数与状态项（上下文、产物、子代理、任务、沙箱、Token、时长）在 CLI 省略时按 `0`、`0.0%`、`0m` 或 `OFF` 照常显示，确实无值的项（如未生成标题、非 Git 目录、未上报的配额/缓存/费用）与空行自动省略。低于 100 列时生效 `narrow` 覆盖（未写则继承）并使用短写形式，内容过多时终端可能折行。
+核心状态始终在第一行开头。所有开关均为布尔值且默认全部开启；计数与状态项（上下文、产物、子代理、任务、沙箱、Token、速度、时长）在 CLI 省略时按 `0`、`0.0%`、`0 tok/s`、`0m` 或 `OFF` 照常显示，确实无值的项（如未生成标题、非 Git 目录、未上报的配额/缓存/费用）与空行自动省略。低于 100 列时生效 `narrow` 覆盖（未写则继承）并使用短写形式，内容过多时终端可能折行。
 
 ```json
 {

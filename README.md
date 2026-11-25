@@ -52,7 +52,7 @@ Everything is handled through `/hud` or plain natural language inside `agy`—no
 
 - **Git**: `[...]` status flags (`=` conflicted, `+` staged, `!` modified, `✘` deleted, `»` renamed, `?` untracked, `$` stashed, `↑N`/`↓N` ahead/behind) and `(+N −M)` tracked diff lines; narrow panes show `*` when dirty.
 - **Quota**: used % (green `<60%`, yellow `60–89%`, red `>=90%`) + reset time; count-only buckets show `<N> left`.
-- **Tokens**: `token <total> (<input>↑ <output>↓)` across the session.
+- **Tokens**: `tok <total> (<input>↑ <output>↓)` across the session, followed by `<N> tok/s` for the current turn's end-to-end output rate.
 
 ## Uninstall
 
@@ -77,9 +77,9 @@ Stored at `${XDG_CONFIG_HOME:-~/.config}/statusline-hud/config.json` (hot-reload
 | --- | --- |
 | 1 | `showMode`, `showModel`, `showContext`, `showPath`, `showGit` |
 | 2 | `showGeminiQuota`, `show3pQuota` |
-| 3 | `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showCache`, `showDuration`, `showCost`, `showTitle` |
+| 3 | `showArtifacts`, `showSubagents`, `showTasks`, `showSandbox`, `showTokens`, `showTokenSpeed`, `showCache`, `showDuration`, `showCost`, `showTitle` |
 
-Core status always starts row 1. All switches are booleans defaulting to `true`; enabled count and state items (`context`, `artifacts`, `subagents`, `tasks`, `sandbox`, `tokens`, `duration`) show `0`, `0.0%`, `0m`, or `OFF` even when omitted by the CLI, while items with no value (such as an untitled session, non-Git path, or unreported quota/cache/cost) and empty rows are omitted. Below 100 columns, `narrow` overrides apply (missing keys inherit) and compact text forms are used; long rows may wrap.
+Core status always starts row 1. All switches are booleans defaulting to `true`; enabled count and state items (`context`, `artifacts`, `subagents`, `tasks`, `sandbox`, `tokens`, `token speed`, `duration`) show `0`, `0.0%`, `0 tok/s`, `0m`, or `OFF` even when omitted by the CLI, while items with no value (such as an untitled session, non-Git path, or unreported quota/cache/cost) and empty rows are omitted. Below 100 columns, `narrow` overrides apply (missing keys inherit) and compact text forms are used; long rows may wrap.
 
 ```json
 {
