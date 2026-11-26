@@ -53,9 +53,19 @@ fi
 CACHE_ROOT="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/statusline-hud"
 CONFIG_FILE="${XDG_CONFIG_HOME:-${HOME:-/tmp}/.config}/statusline-hud/config.json"
 
-JQ_CFG_ARGS=(--arg cfg_raw "{}" --arg home "${HOME:-}" --arg fallback_pwd "${PWD:-}")
+# agy's own settings: the statusline payload omits the Orchestrator planner/executor.
+AGY_SETTINGS_FILE="${HOME:+${HOME}/.gemini/antigravity-cli/settings.json}"
+
+JQ_CFG_ARGS=(--arg home "${HOME:-}" --arg fallback_pwd "${PWD:-}")
 if [ -r "$CONFIG_FILE" ]; then
-  JQ_CFG_ARGS=(--rawfile cfg_raw "$CONFIG_FILE" --arg home "${HOME:-}" --arg fallback_pwd "${PWD:-}")
+  JQ_CFG_ARGS+=(--rawfile cfg_raw "$CONFIG_FILE")
+else
+  JQ_CFG_ARGS+=(--arg cfg_raw "{}")
+fi
+if [ -n "$AGY_SETTINGS_FILE" ] && [ -r "$AGY_SETTINGS_FILE" ]; then
+  JQ_CFG_ARGS+=(--rawfile agy_raw "$AGY_SETTINGS_FILE")
+else
+  JQ_CFG_ARGS+=(--arg agy_raw "{}")
 fi
 
 # Shared cleanup for CLI values and Git branch names.
@@ -187,7 +197,13 @@ done < <(
         then ([.subagents[] | select(type == "object" and .status == "running")] | length) else 0 end))
     + kv("SUBAGENT_TOTAL"; (if (.subagents | type) == "array" then (.subagents | length) else 0 end))
     + kv("BG_TASKS"; (.task_count? | clean_uint))
-    + kv("MODEL"; ((.model?.display_name? // .model?.id? // "") | clean_str))
+    + kv("MODEL"; ((.model?.display_name? // .model?.id? // "") | clean_str) as $m
+        | if ($m | startswith("Orchestrator")) then
+            (($agy_raw | ltrimstr("\ufeff") | fromjson? | objects) // {}) as $agy
+            | (($agy.orchestrator?.planner? // "") | clean_str) as $p
+            | (($agy.orchestrator?.executor? // "") | clean_str) as $e
+            | if $p != "" and $e != "" then "Orchestrator: \($p) → \($e)" else $m end
+          else $m end)
     + kv("TITLE_FMT"; (.conversation_title? | clean_title))
     + kv("CONV_ID"; ((.conversation_id? // .session_id? // "") | clean_str))
     + kv("TRANSCRIPT_PATH"; (.transcript_path? | clean_str))

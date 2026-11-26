@@ -300,6 +300,18 @@ OUT=$("$STATUSLINE" <<< '{"cwd":"/项目/很长的项目名","conversation_title
 PLAIN=$(strip_ansi "$OUT")
 assert_eq "no pruning, no separate title row" "$PLAIN" $'  ● READY │ Gemini 4 Neon (XHigh) │ ctx 0.0% │ …/很长的项目名 │ feature/很长的分支名\n  artifacts 0 │ subagents 0/0 │ tasks 1 │ sandbox OFF │ tok 0 │ 0 tok/s │ 0m │ ▸ ✨ 修复标题'
 
+# Orchestrator shows planner → executor from agy settings.json.
+AGY_HOME="${TMP_DIR}/agy-home"
+mkdir -p "${AGY_HOME}/.gemini/antigravity-cli"
+printf '%s' '{"model":"Orchestrator (Neon)","orchestrator":{"planner":"Claude Opus 5.5 (High)","executor":"Claude Sonnet 5.5 (High)"}}' > "${AGY_HOME}/.gemini/antigravity-cli/settings.json"
+ORCH_PAYLOAD='{"cwd":"/tmp","model":{"id":"Orchestrator (Neon)","display_name":"Orchestrator (Neon)"},"terminal_width":120}'
+OUT=$(HOME="$AGY_HOME" "$STATUSLINE" <<< "$ORCH_PAYLOAD")
+assert_contains "orchestrator shows planner and executor" "$(strip_ansi "$OUT")" "│ Orchestrator: Claude Opus 5.5 (High) → Claude Sonnet 5.5 (High) │"
+OUT=$(HOME="$AGY_HOME" "$STATUSLINE" <<< '{"cwd":"/tmp","model":{"display_name":"Claude Opus 5.5 (High)"},"terminal_width":120}')
+assert_contains "non-orchestrator model ignores settings" "$(strip_ansi "$OUT")" "│ Claude Opus 5.5 (High) │"
+OUT=$(HOME="${TMP_DIR}/no-agy-home" "$STATUSLINE" <<< "$ORCH_PAYLOAD")
+assert_contains "orchestrator without settings falls back" "$(strip_ansi "$OUT")" "│ Orchestrator (Neon) │"
+
 # LC_ALL=C locale safety (no broken UTF-8 bar bytes, still shows bar on wide screen)
 OUT=$(LC_ALL=C "$STATUSLINE" <<< '{
   "cwd":"/tmp",
